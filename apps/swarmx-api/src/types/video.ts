@@ -65,6 +65,8 @@ export interface VideoJobRequest {
   platform?: VideoExportPlatform | "youtube_shorts";
   /** Niche category — informs scripting model routing. */
   niche?: "motivational" | "finance" | "facts" | "true_crime" | "tech" | "other";
+  /** Structural template family. */
+  templateFamily?: "myth-vs-fact" | "list/countdown" | "mystery/reveal" | "product-demo" | "quote-to-insight" | "chart/data" | "motivational" | "series-recap";
   /** Preferred output duration in seconds. Clamped to 15–180 by orchestrator. */
   targetDurationSeconds?: number;
   /** Model tier override — defaults to auto-routing via complexity score. */

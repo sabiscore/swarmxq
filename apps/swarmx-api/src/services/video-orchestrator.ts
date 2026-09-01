@@ -1655,18 +1655,33 @@ function creativeBriefLines(req: VideoJobRequest): string {
   ].join("\n");
 }
 
+const TEMPLATE_FAMILY_STRUCTURES: Record<string, string> = {
+  "myth-vs-fact": "Structure as a direct debunking. Hook states the myth, Body provides the surprising fact, Resolution explains why the myth persisted.",
+  "list/countdown": "Structure as a rapid-fire list. Hook introduces the topic/stakes, Body cycles through 3-5 items quickly, Resolution synthesizes the takeaway.",
+  "mystery/reveal": "Structure as a narrative puzzle. Hook presents an anomaly, Body drops breadcrumbs/clues, Resolution reveals the surprising answer.",
+  "product-demo": "Structure as a problem/solution showcase. Hook highlights a visceral pain point, Body demonstrates the solution in action, Resolution highlights the outcome.",
+  "quote-to-insight": "Structure around a powerful quote. Hook drops the quote, Body analyzes its non-obvious meaning, Resolution applies it to the viewer's life.",
+  "chart/data": "Structure around a single striking data point. Hook presents the stat, Body visualizes the trend and context, Resolution explains the implication.",
+  "motivational": "Structure as a hero's journey micro-narrative. Hook identifies a moment of defeat, Body shows the pivot/grind, Resolution delivers the triumph.",
+  "series-recap": "Structure as a fast-paced catch-up. Hook reminds of the cliffhanger, Body blitzes through key plot points, Resolution sets up the next episode."
+};
+
 function buildPlanningPrompt(req: VideoJobRequest, intent: string): string {
   const dur = req.targetDurationSeconds ?? 60;
   const hookEnd = Math.min(4, Math.round(dur * 0.07));
   const contextEnd = Math.round(dur * 0.25);
   const insightEnd = Math.round(dur * 0.65);
   const proofEnd = dur - 7;
+  const templateHint = req.templateFamily && TEMPLATE_FAMILY_STRUCTURES[req.templateFamily] 
+    ? `\nTemplate Family [${req.templateFamily}]: ${TEMPLATE_FAMILY_STRUCTURES[req.templateFamily]}\nApply this structural template to the 5 beats.` 
+    : "";
+
   return `You are a short-form video production planner. Plan this ${dur}-second faceless video as 5 precise production beats.
 
 Platform: ${req.platform ?? "tiktok"} | Niche: ${req.niche ?? "general"} | Tone: ${req.tone ?? "educational"} | Style: ${req.style ?? "faceless_broll"}
 Audience: ${req.audience ?? "general viewers"}
 Intent: ${intent}
-Creative brief: "${req.prompt}"
+Creative brief: "${req.prompt}"${templateHint}
 
 Write exactly 5 numbered beats — not generic labels, but specific production instructions for this topic:
 1. HOOK (0-${hookEnd}s): The scroll-stopping opener. What specific claim, question, or visual contrast starts the video?

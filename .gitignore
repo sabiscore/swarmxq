@@ -45,3 +45,5 @@ apps/**/.swarmx/video/
 .DS_Store
 Thumbs.db
 AGENTS.md
+.vercel
+.env*

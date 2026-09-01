@@ -6,6 +6,7 @@ export interface QuickStartPreset {
   prompt: string;
   platform: NonNullable<VideoJobRequest["platform"]>;
   niche: NonNullable<VideoJobRequest["niche"]>;
+  templateFamily?: NonNullable<VideoJobRequest["templateFamily"]>;
   targetDuration: string;
   tone: NonNullable<VideoJobRequest["tone"]>;
   style: NonNullable<VideoJobRequest["style"]>;
@@ -20,6 +21,7 @@ export interface QuickStartDraft {
   prompt: string;
   platform: NonNullable<VideoJobRequest["platform"]>;
   niche: NonNullable<VideoJobRequest["niche"]>;
+  templateFamily?: NonNullable<VideoJobRequest["templateFamily"]>;
   targetDuration: string;
   tone: NonNullable<VideoJobRequest["tone"]>;
   style: NonNullable<VideoJobRequest["style"]>;
@@ -37,6 +39,7 @@ export const QUICK_START_PRESETS: QuickStartPreset[] = [
     prompt: "Create a 30-second kinetic-text video titled '3 AI workflow mistakes costing you hours every week' with a hard-hitting hook, escalating stakes, and one specific workflow fix.",
     platform: "tiktok",
     niche: "tech",
+    templateFamily: "list/countdown",
     targetDuration: "30",
     tone: "urgent",
     style: "kinetic_text",
@@ -52,6 +55,7 @@ export const QUICK_START_PRESETS: QuickStartPreset[] = [
     prompt: "Create a 45-second faceless video titled 'Why your salary still feels tight after a raise' with one counterintuitive claim, one practical example, and a concrete weekly action.",
     platform: "reels",
     niche: "finance",
+    templateFamily: "quote-to-insight",
     targetDuration: "60",
     tone: "educational",
     style: "faceless_broll",
@@ -67,6 +71,7 @@ export const QUICK_START_PRESETS: QuickStartPreset[] = [
     prompt: "Create a 30-second storytime video titled 'The 10-minute rule that beats procrastination' with emotional progression from resistance to action and a save-worthy CTA.",
     platform: "youtube_shorts",
     niche: "motivational",
+    templateFamily: "motivational",
     targetDuration: "30",
     tone: "warm",
     style: "storytime",
@@ -82,6 +87,7 @@ export const QUICK_START_PRESETS: QuickStartPreset[] = [
     prompt: "Create a 30-second myth-busting video titled 'No, multitasking is not making you faster' that opens with a contrarian line, gives one proof point, and ends with a behavior change CTA.",
     platform: "tiktok",
     niche: "facts",
+    templateFamily: "myth-vs-fact",
     targetDuration: "30",
     tone: "contrarian",
     style: "myth_busting",
@@ -98,6 +104,7 @@ export function mapQuickStartPresetToDraft(preset: QuickStartPreset): QuickStart
     prompt: preset.prompt,
     platform: preset.platform,
     niche: preset.niche,
+    templateFamily: preset.templateFamily,
     targetDuration: preset.targetDuration,
     tone: preset.tone,
     style: preset.style,

@@ -352,7 +352,7 @@ When skills produce conflicting recommendations, resolve in this order:
 ## 1. Security & Safety
 → `security-hardening-auditor`
 → `backend-systems-auditor`
-→ `swarmxq-model-orchestrator` (RAM_CRITICAL_MB, MAX_CONCURRENT_JOBS are protected constants)
+→ `swarmxq-model-orchestrator` (RAM_CRITICAL_MB, MAX_CONCURRENT_JOBS, OLLAMA_NUM_PARALLEL=1 are protected, INV-08; CPU pressure floor INV-06)
 
 ## 2. Correctness & Stability
 → `testing-strategy-architect`
@@ -364,8 +364,8 @@ When skills produce conflicting recommendations, resolve in this order:
 → `api-contract-governance-architect`
 
 ## 3. Performance & Scalability
-→ `swarmxq-model-orchestrator` (SINGLE-7B LOCK, keep-alive strategy, 16 GB profile)
-→ `swarmxq-startup-ops-architect` (Ollama CPU perf vars, startup sequence)
+→ `swarmxq-model-orchestrator` (SINGLE-7B LOCK INV-01, 16 GB baseline profile INV-09, CPU pressure floor INV-06, keep-alive policy)
+→ `swarmxq-startup-ops-architect` (Ollama CPU perf — must set before inference, INV-08/INV-14)
 → `nextjs-performance-architect`
 → `edge-cache-architecture-architect`
 → `opentelemetry-observability-architect`
@@ -1134,7 +1134,7 @@ Push only after all quality gates pass.
 | ~~11~~ | ~~**P1 Completion + Audio**~~ | ✅ V6.2.52 — tournament 11-axis diversity, EBU R128 audio mastering, template-aware QC, path traversal fix |
 | ~~12~~ | ~~**Integrations + UX**~~ | ✅ V6.2.53–V6.2.60 — template-aware QC, RetentionMap preview, RuntimeCapabilityStrip, video runtime guidance, voice profile routing |
 | **13** | **S5: Golden-Path Re-Cert** | Clean clone → real MP4 from production renderer → `/api/system/health` shows voice.benchmark + runtime profile; `stageValidationTrace` populated; cert tier ≥ `PRODUCTION_PACK_VALID`; template-aware QC runs |
-| **14** | **S2: Template Family Expansion (+8 templates)** | myth-vs-fact, list/countdown, mystery/reveal, product-demo, quote-to-insight, chart/data, motivational, series-recap all wired as selectable `templateFamily` in `VideoJobRequest`; each has tone mapping + storyboard style hints |
+| ~~14~~ | ~~**S2: Template Family Expansion (+8 templates)**~~ | ✅ V6.2.61 — myth-vs-fact, list/countdown, mystery/reveal, product-demo, quote-to-insight, chart/data, motivational, series-recap all wired as selectable `templateFamily` in `VideoJobRequest`; each has tone mapping + storyboard style hints |
 | **15** | **Ollama JSON-mode Migration** | CPU JSON-mode reliability benchmark run first (< 5% parse failure rate required); if passes: `planning` and `storyboard_generation` stages migrated from regex extraction to `format: "json"` in Ollama request; regression scripts updated |
 | **16** | **S3: Preview Pipeline (Proxy Renders)** | `PLAN_ONLY` and `QUICK_DRAFT` modes skip full-resolution encode; proxy render at 360p; certification ceiling respected; `previewUrl` field |
 | **17** | **S4: Openverse Adapter** | ADR written and approved first (per V4 §22); adapter searches CC0/CC-BY assets; `AssetLicense` metadata attached; rate-limit aware |
@@ -1174,15 +1174,15 @@ While executing any milestone, continuously scan for violations. Each tier has a
 - `video-cleanup.ts` cleanup interval not started at server boot
 - `resumeJob()` not validating `fromStage` against artifact availability before re-queueing
 - `stageViralityAndCaption()` result not persisted to BullMQ job data on completion
-- `OLLAMA_MAX_LOADED_MODELS` still at 1 on 16 GB host (blocks Pilot+7B dual-resident path, INV-09)
+- ~~`OLLAMA_MAX_LOADED_MODELS` still at 1 on 16 GB host (blocks Pilot+7B dual-resident path)~~ ✅ V6.2.44 (INV-09)
 - Ollama perf vars not set before starting Ollama service
 - ComfyUI `totalFrames` hard-floored at 16 when `availableMb` > 8 000 (Priority 5 unlocks)
 - Missing OTel trace spans around `runOrchestration()` lifecycle
-- `doctor.ts` script missing from `apps/swarmx-api/scripts/` (Milestone 10)
+- ~~`doctor.ts` script missing from `apps/swarmx-api/scripts/`~~ ✅ V6.2.50
 - Voice benchmark not re-run after Kokoro or Piper install/upgrade
 - `AssetLicense` metadata absent from b-roll assets used in `faceless_broll` renders
 - `SWARMX_SCRIPT_DRIFT_THRESHOLD` not wired into video-regression-check.ts
-- Cert-tier state machine: `BLOCKED` and `NEEDS_REVISION` tiers entered via direct assignment, not transition function (INV-19)
+- ~~Cert-tier state machine: `BLOCKED` and `NEEDS_REVISION` tiers entered via direct assignment, not transition function~~ ✅ V6.2.50 (INV-19)
 
 ## Medium Impact — Log in memory note; address opportunistically
 

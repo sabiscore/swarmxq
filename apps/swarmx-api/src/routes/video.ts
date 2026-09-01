@@ -254,6 +254,10 @@ const VideoJobRequestSchema = {
       type: "string",
       enum: ["motivational", "finance", "facts", "true_crime", "tech", "other"],
     },
+    templateFamily: {
+      type: "string",
+      enum: ["myth-vs-fact", "list/countdown", "mystery/reveal", "product-demo", "quote-to-insight", "chart/data", "motivational", "series-recap"],
+    },
     targetDurationSeconds: { type: "number", minimum: 15, maximum: 180 },
     modelTier: {
       type: "string",

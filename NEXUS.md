@@ -216,7 +216,7 @@ Conditional:
 ```
 Required:
   swarmxq-startup-ops-architect      (startup-enhanced.sh implementation)
-  swarmxq-model-orchestrator         (OLLAMA_MAX_LOADED_MODELS=2, keep-alive policy)
+  swarmxq-model-orchestrator         (OLLAMA_MAX_LOADED_MODELS=1 (or 2 for Pilot+7B), keep-alive policy)
 
 Conditional:
   swarmxq-video-pipeline-architect   (ComfyUI frame budget update at 16 GB)

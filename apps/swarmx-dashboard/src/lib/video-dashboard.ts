@@ -69,6 +69,7 @@ export interface VideoJobRequest {
   prompt: string;
   platform?: VideoExportPlatform | "youtube_shorts";
   niche?: "motivational" | "finance" | "facts" | "true_crime" | "tech" | "other";
+  templateFamily?: "myth-vs-fact" | "list/countdown" | "mystery/reveal" | "product-demo" | "quote-to-insight" | "chart/data" | "motivational" | "series-recap";
   targetDurationSeconds?: number;
   modelTier?: "fast" | "worker" | "supervisor" | "reasoner";
   audience?: string;
