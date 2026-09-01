@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { cn, safeErrorMessage } from "@/lib/utils";
+import { resolveClientApiBaseUrl } from "@/lib/api-config";
 import { useEventsStore } from "@/stores/events";
 import { useApiHealth, type ApiHealthState } from "@/hooks/useApiHealth";
 import { Button } from "@/components/ui/button";
@@ -57,8 +58,8 @@ function makeComposerSessionId(): string {
 }
 
 function resolveDirectApiBaseUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_SWARMX_API_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
+  const configured = resolveClientApiBaseUrl();
+  if (configured) return configured;
   return "http://127.0.0.1:3001";
 }
 

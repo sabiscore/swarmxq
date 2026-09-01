@@ -21,6 +21,7 @@ import type { AgentState } from "@swarmx/types";
 import { useUIStore } from "@/stores/ui";
 import { useApiHealth } from "@/hooks/useApiHealth";
 import { RouteDegradedBanner } from "@/components/layout/RouteDegradedBanner";
+import { resolveClientApiBaseUrl } from "@/lib/api-config";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -308,7 +309,7 @@ function AgentsPageContent() {
     signal?.addEventListener("abort", abort, { once: true });
 
     try {
-      const base = process.env.NEXT_PUBLIC_SWARMX_API_URL ?? "http://127.0.0.1:3001";
+      const base = resolveClientApiBaseUrl();
       const res = await fetch(`${base}/api/agents`, { cache: "no-store", signal: controller.signal });
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);

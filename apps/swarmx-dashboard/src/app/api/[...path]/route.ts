@@ -1,9 +1,10 @@
 import { type NextRequest } from "next/server";
+import { resolveServerApiUrl } from "@/lib/api-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const API_URL = (process.env.SWARMX_API_URL ?? "http://127.0.0.1:3001").replace(/\/+$/, "");
+const API_URL = resolveServerApiUrl();
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function buildTargetUrl(path: string[], request: NextRequest): string {

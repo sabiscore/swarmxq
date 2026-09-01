@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
+import { resolveClientApiBaseUrl } from "@/lib/api-config";
 
 interface RetentionBeat {
   timestamp: number;
@@ -35,9 +36,7 @@ function riskClasses(risk: "LOW" | "MEDIUM" | "HIGH"): string {
 }
 
 function resolveApiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_SWARMX_API_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-  return "http://127.0.0.1:3001";
+  return resolveClientApiBaseUrl();
 }
 
 const DEFAULT_SCRIPT = `[HOOK]

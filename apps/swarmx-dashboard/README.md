@@ -12,8 +12,11 @@ pnpm --filter @swarmx/dashboard dev
 
 Dashboard: `http://localhost:3000`
 
-The dashboard expects the API at `NEXT_PUBLIC_SWARMX_API_URL`, falling back to
-`NEXT_PUBLIC_API_URL`, then `http://127.0.0.1:3001`.
+## Environment Configuration
+
+- **`SWARMX_API_URL`** (Server-side): Target Fastify API URL used by the Next.js API route proxy (`src/app/api/[...path]/route.ts`) and WebSocket rewrites (`next.config.ts`). Defaults to `http://127.0.0.1:3001`. In cloud deployments (e.g. Vercel), set this to your publicly hosted API URL.
+- **`SWARMX_VIDEO_API_TOKEN`** (Server-side): Secret token injected into outbound write requests by the proxy handler. Never exposed to the browser.
+- **`NEXT_PUBLIC_SWARMX_API_URL`** (Client-side, Optional): Direct API base override for client fetch calls. If omitted, the browser uses relative `/api/*` endpoints through Next.js proxying.
 
 ## Video Workspace
 

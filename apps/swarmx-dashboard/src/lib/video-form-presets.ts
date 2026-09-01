@@ -100,11 +100,10 @@ export const QUICK_START_PRESETS: QuickStartPreset[] = [
 ];
 
 export function mapQuickStartPresetToDraft(preset: QuickStartPreset): QuickStartDraft {
-  return {
+  const draft: QuickStartDraft = {
     prompt: preset.prompt,
     platform: preset.platform,
     niche: preset.niche,
-    templateFamily: preset.templateFamily,
     targetDuration: preset.targetDuration,
     tone: preset.tone,
     style: preset.style,
@@ -114,4 +113,10 @@ export function mapQuickStartPresetToDraft(preset: QuickStartPreset): QuickStart
     storyMode: preset.storyMode,
     audience: preset.audience,
   };
+
+  if (preset.templateFamily !== undefined) {
+    draft.templateFamily = preset.templateFamily;
+  }
+
+  return draft;
 }

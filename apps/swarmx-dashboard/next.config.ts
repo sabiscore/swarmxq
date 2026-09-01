@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 // [V5.9-FIX-07] Default to IPv4 loopback to avoid localhost IPv6 resolution
 // mismatches when the API is bound on 127.0.0.1.
-const API_URL = process.env.SWARMX_API_URL ?? "http://127.0.0.1:3001";
+const API_URL = (process.env.SWARMX_API_URL?.trim() || "http://127.0.0.1:3001").replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {
   output: "standalone",

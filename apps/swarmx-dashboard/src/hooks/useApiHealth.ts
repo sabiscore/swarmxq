@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { resolveClientApiBaseUrl } from "@/lib/api-config";
 
 export interface WarmupSnapshot {
   done: boolean;
@@ -38,9 +39,7 @@ export interface ApiHealthState {
 }
 
 function resolveDirectApiBaseUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_SWARMX_API_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-  return "http://127.0.0.1:3001";
+  return resolveClientApiBaseUrl();
 }
 
 const API_HEALTH_QUERY_KEY = ["swarmx", "api-health"] as const;
