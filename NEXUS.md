@@ -1,5 +1,5 @@
 # NEXUS — Task Orchestration Engine v3.0 (SwarmXQ Edition)
-# Baseline: V6.2.63 · APEX-17 r8 · 39-skill registry
+# Baseline: V6.2.60 · APEX-17 r8 · 39-skill registry
 
 > **Disambiguation — read this first.**
 >
@@ -59,14 +59,14 @@ Classify every incoming task. A task may map to multiple types; resolve the full
 |---|---|
 | **Video Pipeline** | "video job", "video stage", "intent_classification", "planning stage", "scripting", "storyboard", "render assembly", "finalizing", "video orchestrator", "stage progress", "stageViralityAndCaption", "video:progress", "video:completed", "video:failed" |
 | **Render Backend** | "ffmpeg", "comfyui", "LTX-Video", "render backend", "SWARMX_VIDEO_RENDER_BACKEND", "renderWithFfmpeg", "comfyRunWorkflow", "frame budget", "totalFrames" |
-| **Model Orchestration** | "SINGLE-7B", "model eviction", "evictIncompatible", "keep-alive", "OLLAMA_KEEP_ALIVE", "OLLAMA_MAX_LOADED_MODELS", "acquireModel", "ModelOrchestrator", "resolveCanonicalTag", "legacy alias", "pressure level", "PRESSURE_CRITICAL", "readPressure", "RAM pressure" |
-| **APEX-17 r8 Operators** | "Pilot", "Oracle", "Forge", "Architect", "Relay", "Auditor", "Lab", "MODEL_OPERATOR_MAP", "operator map", "resolveOperatorName", "model triad", "canonical tag", "operator trace" |
+| **Model Orchestration** | "SINGLE-7B", "model eviction", "evictIncompatible", "keep-alive", "OLLAMA_KEEP_ALIVE", "OLLAMA_MAX_LOADED_MODELS", "acquireModel", "ModelOrchestrator", "resolveCanonicalTag", "legacy alias", "pressure level", "PRESSURE_CRITICAL", "readPressure", "RAM pressure", "16 GB baseline", "CPU pressure floor", "INV-06", "INV-08", "INV-09" |
+| **APEX-17 r8 Operators** | "Pilot", "Oracle", "Forge", "Architect", "Relay", "Auditor", "Lab", "MODEL_OPERATOR_MAP", "operator map", "resolveOperatorName", "model triad", "canonical tag", "operator trace", "7-operator taxonomy" |
 | **Agent System** | "SwarmX agent", "agent catalog", "agent role", "workflow router", "strategist", "evaluator", "evolver", "risk sentinel", "agent dispatch", "multi-agent", "APEX-17", "agent council" |
 | **Creative Quality** | "[HOOK]", "[BODY]", "[RESOLUTION]", "[CTA]", "hook pattern", "HOOK_BLOCKLIST", "TONE_RULES", "tone variant", "virality scoring", "hookStrength", "completionProxy", "shareability", "seoScore", "ViralitySignal", "CAPTION_RULES", "captionDraft", "soundSuggestion", "faceless_broll", "kinetic_text", "storyboard scene", "comfyPrompt", "scene count" |
 | **Video Job Queue** | "BullMQ video", "job persistence", "SWARMX_VIDEO_USE_BULLMQ", "video queue", "clientRequestId", "idempotency", "SINGLE-VIDEO LOCK", "MAX_CONCURRENT_JOBS", "enqueue", "cancelJob", "resumeJob" |
 | **SSE / Job Streaming** | "video:stream", "subscribeToJob", "SSE disconnect", "BroadcastFn", "makeVideoProgressEvent", "video reconnect", "AsyncIterable<SwarmXEvent>" |
-| **Pressure / RAM** | "swarm-pressure-monitor", "governor", "HIGH_PRESSURE_DELAY_MS", "MemAvailable", "/proc/meminfo", "availableMb", "getRamSnapshot", "shouldAutoEnableLowRamMode" |
-| **Startup Ops / Ollama Performance** | "startup-enhanced.sh", "Ollama warmup", "Pilot pre-warm", "zero-token probe", "OLLAMA_NUM_PARALLEL", "OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_NUM_THREADS", "KV cache type", "flash attention", "num_ctx", "cold-start ETA", "warmup-status", "warmup flag", "/proc/meminfo", "MemAvailable", "FULL_PIPELINE_MIN_AVAILABLE_MB", "12 GB detection", "startup sequence", "boot sequence", "model warmup", "16 GB profile" |
+| **Pressure / RAM / CPU** | "swarm-pressure-monitor", "governor", "HIGH_PRESSURE_DELAY_MS", "MemAvailable", "/proc/meminfo", "availableMb", "getRamSnapshot", "shouldAutoEnableLowRamMode", "CPU pressure floor", "loadAvg1m", "0.85 load ceiling", "INV-06" |
+| **Startup Ops / Ollama Performance** | "startup-enhanced.sh", "Ollama warmup", "Pilot pre-warm", "zero-token probe", "OLLAMA_NUM_PARALLEL", "OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_NUM_THREADS", "KV cache type", "flash attention", "num_ctx", "cold-start ETA", "warmup-status", "warmup flag", "/proc/meminfo", "MemAvailable", "FULL_PIPELINE_MIN_AVAILABLE_MB", "12 GB detection", "startup sequence", "boot sequence", "model warmup", "16 GB profile", "standard_cpu_16gb" |
 | **Reasoning Sanitization** | "reasoning sanitizer", "sanitizeReasoningOutput", "DeepSeek think", "extractJson", "<think> blocks" |
 | **Env Configuration** | "loadEnv", "env.ts", "Zod env schema", "SWARMX_VIDEO_*", "SWARMX_OLLAMA_*", "env fail-fast" |
 | **Structured Logging** | "logger.ts", "Pino-compatible", "console.* migration", "log.warn", "log.error", "NDJSON", "unhandledRejection" |
@@ -356,11 +356,12 @@ Use the repo's stack to sharpen routing.
 - Python async patterns (`asyncio`, `httpx.AsyncClient`) → `backend-systems-auditor` (Python surface)
 
 **Hardware-Sensitive Code**
-- Anything touching `/proc/meminfo`, `availableMb`, `RAM_CRITICAL_MB` → `swarmxq-model-orchestrator`
-- `startup-enhanced.sh`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_NUM_PARALLEL`, `OLLAMA_FLASH_ATTENTION`, `OLLAMA_KV_CACHE_TYPE`, `OLLAMA_NUM_THREADS` → `swarmxq-startup-ops-architect` + `swarmxq-model-orchestrator`
-- `shouldAutoEnableLowRamMode()` → `swarmxq-model-orchestrator`
+- Anything touching `/proc/loadavg`, CPU load ratio (`loadAvg1m / coreCount < 0.85`), `availableMb`, `RAM_CRITICAL_MB` → `swarmxq-model-orchestrator` (INV-06, INV-08)
+- `startup-enhanced.sh`, `OLLAMA_MAX_LOADED_MODELS=1` (or 2 for Pilot+7B), `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_FLASH_ATTENTION`, `OLLAMA_KV_CACHE_TYPE`, `OLLAMA_NUM_THREADS` → `swarmxq-startup-ops-architect` + `swarmxq-model-orchestrator` (INV-08, INV-09, INV-14)
+- `shouldAutoEnableLowRamMode()`, `LOW_RAM_VIDEO_MODEL` → `swarmxq-model-orchestrator` (8 GB degradation fallback under 16 GB baseline, INV-10)
+- CPU pressure floor stalls (`loadAvg1m / coreCount >= 0.85`) → `swarmxq-model-orchestrator` + `swarmxq-startup-ops-architect` (INV-06)
 - Ollama throughput complaints or `tok/s` degradation → `swarmxq-startup-ops-architect` (check CPU perf vars first)
-- `/api/system/health` warmup flag → `swarmxq-startup-ops-architect`
+- `/api/system/health` warmup flag and CPU load metrics → `swarmxq-startup-ops-architect`
 
 **Creative Output Quality**
 - `TONE_RULES`, `HOOK_BLOCKLIST`, `CAPTION_RULES`, `VIRALITY_SCORE_RUBRIC` → `swarmxq-creative-director`
@@ -381,7 +382,7 @@ When skills produce conflicting recommendations, resolve in this order:
 ## 1. Security & Safety
 → `security-hardening-auditor`
 → `backend-systems-auditor`
-→ `swarmxq-model-orchestrator` (RAM_CRITICAL_MB, MAX_CONCURRENT_JOBS are protected)
+→ `swarmxq-model-orchestrator` (RAM_CRITICAL_MB, MAX_CONCURRENT_JOBS, OLLAMA_NUM_PARALLEL=1 are protected, INV-08; CPU pressure floor INV-06)
 
 ## 2. Correctness & Stability
 → `testing-strategy-architect`
@@ -393,8 +394,8 @@ When skills produce conflicting recommendations, resolve in this order:
 → `api-contract-governance-architect`
 
 ## 3. Performance & Scalability
-→ `swarmxq-model-orchestrator` (SINGLE-7B LOCK, keep-alive policy)
-→ `swarmxq-startup-ops-architect` (Ollama CPU perf — must set before inference)
+→ `swarmxq-model-orchestrator` (SINGLE-7B LOCK INV-01, 16 GB baseline profile INV-09, CPU pressure floor INV-06, keep-alive policy)
+→ `swarmxq-startup-ops-architect` (Ollama CPU perf — must set before inference, INV-08/INV-14)
 → `nextjs-performance-architect`
 → `opentelemetry-observability-architect`
 → `real-time-systems-architect`
@@ -545,31 +546,31 @@ Followed by:
 
 ---
 
-# VERIFIED COMPONENT STATE (V6.2.63 — 2026-08-05)
+# VERIFIED COMPONENT STATE (V6.2.60 — 2026-08-05)
 
 ## Routing Implications from Verified Ground Truth
 
 | Verified Fact | NEXUS Routing Implication |
 |---|---|
-| Zero `console.*` in services/routes | Logging tasks: `log.*` from `src/lib/logger.ts` only; reject any PR adding `console.*` |
+| Zero `console.*` in services/routes | Logging tasks: `log.*` from `src/lib/logger.ts` only; reject any PR adding `console.*` (INV-07) |
 | `loadEnv()` wired in `server.ts` | Env tasks: always add to `env.ts` Zod schema; never direct `process.env` for validated vars |
-| VOT-09 through VOT-13 plus V6.2.63 intent fallback applied | Video pipeline: `modelsUsed` in stage fn; `{ once: true }` on listeners; `sanitizeReasoningOutput()` mandatory; malformed sanitized intent JSON continues through `buildDeterministicIntentFallback()` |
-| `MAX_CONCURRENT_JOBS=1` | Queue tasks: never suggest concurrent video jobs; CPU inference is serial |
+| VOT-09 through VOT-13 plus V6.2.60 runtime guidance & voice profile routing applied | Video pipeline: `modelsUsed` in stage fn (INV-03); `{ once: true }` on listeners; `sanitizeReasoningOutput()` mandatory (INV-04); deterministic fallback on malformed sanitized intent (INV-05) |
+| `MAX_CONCURRENT_JOBS=1` & CPU pressure floor (`loadAvg1m / coreCount < 0.85`) | Queue tasks: never suggest concurrent video jobs; CPU inference is strictly serial (`OLLAMA_NUM_PARALLEL=1`, INV-08 / INV-14); CPU floor is primary stalling constraint (INV-06) |
 | BullMQ enabled, Worker co-located | Queue tasks: Worker + Queue use separate ioredis connections; Redis fallback to in-memory |
-| 355 API tests + 65 dashboard tests passing | Testing: keep both package baselines green; route to `testing-strategy-architect` for any new test file |
+| 353 API tests + 58 dashboard tests passing | Testing: keep both package baselines green; route to `testing-strategy-architect` for any new test file |
 | GitHub Actions CI active | Release: route to `swarmxq-ci-release-architect` + `git-workflow-architect` |
-| 16 GB profile active | Model: `OLLAMA_MAX_LOADED_MODELS=2` valid; dual-model residency unlocked |
-| TONE_RULES all 8 variants | Creative: `faceless_broll` and `kinetic_text` confirmed present; CI grep gate validates |
+| 16 GB baseline profile active (`standard_cpu_16gb`) | Model: `OLLAMA_MAX_LOADED_MODELS=1` (or 2 for Pilot+7B) valid (INV-09); dual-model residency unlocked; 8GB fallback via `shouldAutoEnableLowRamMode()` (INV-10) |
+| TONE_RULES all 8 variants | Creative: all 8 variants confirmed present; CI grep gate validates (INV-13) |
 | HOOK_BLOCKLIST consolidated | Creative: single source at `src/lib/creative-quality.ts`; both orchestrator + preproducer import |
 | Hook laboratory (10 families) | Creative: `validateHookCandidate()` + `classifyHookFamily()` wired; route to `swarmxq-creative-director` |
 | Concept tournament (11-axis) | Creative: `fingerprintCandidate()` + Levenshtein diversity; `scoreCandidate()` composite |
-| RetentionMap (7 beats) | Creative: soft guard only; `generateRetentionMap()` available; preview endpoint wired |
-| Render recipe compiler | Pipeline: `sanitizeTextForFilter()` + SHA-256 asset validation; route to `swarmxq-video-pipeline-architect` |
-| EBU R128 audio mastering | Pipeline: two-pass loudnorm; 5 platform profiles; route to `swarmxq-video-pipeline-architect` |
-| Template-aware QC | Pipeline: per-tier finding interpretation; `UNCONDITIONAL_BLOCKERS` cannot be overridden |
-| INV-18 transitions exist | Cert: 4 transition functions (`transitionToPublishing` etc.) + `LATERAL_TERMINAL_TIERS` |
+| RetentionMap (7 beats) | Creative: soft guard only (INV-23); `generateRetentionMap()` available; preview endpoint wired |
+| Render recipe compiler | Pipeline: `sanitizeTextForFilter()` + SHA-256 asset validation; route to `swarmxq-video-pipeline-architect` (INV-20) |
+| EBU R128 audio mastering | Pipeline: two-pass loudnorm; 5 platform profiles; route to `swarmxq-video-pipeline-architect` (INV-21) |
+| Template-aware QC | Pipeline: per-tier finding interpretation; `UNCONDITIONAL_BLOCKERS` cannot be overridden (INV-22) |
+| INV-19 transitions exist | Cert: 4 transition functions (`transitionToPublishing` etc.) + `LATERAL_TERMINAL_TIERS` (INV-19) |
 | Doctor CLI scaffolded | Startup: 6 checks; route to `swarmxq-startup-ops-architect` |
-| Runtime profiles typed | Model: `constrained_cpu_8gb`, `standard_cpu_16gb`, `accelerated_optional` defined |
+| Runtime profiles typed | Model: `constrained_cpu_8gb`, `standard_cpu_16gb`, `accelerated_optional` defined (INV-09) |
 | RuntimeCapabilityStrip | Dashboard: Ollama/RAM/Warmup/Voice status in top bar |
 
 ---
@@ -580,18 +581,19 @@ While executing any task, NEXUS adds these to the skill selection if violations 
 
 | Violation Signal | Add to Graph |
 |---|---|
-| `console.*` found in services/routes | `backend-systems-auditor` → migrate immediately before any other work |
-| `TONE_RULES` missing a variant | `swarmxq-creative-director` → add missing variant before committing |
-| `OLLAMA_NUM_PARALLEL` > 1 | `swarmxq-startup-ops-architect` → reset to 1 before any inference test |
-| `OLLAMA_KV_CACHE_TYPE` = `f16` on 16 GB | `swarmxq-startup-ops-architect` → switch to `q8_0` |
+| `console.*` found in services/routes | `backend-systems-auditor` → migrate immediately before any other work (INV-07) |
+| `TONE_RULES` missing a variant | `swarmxq-creative-director` → add missing variant before committing (INV-13) |
+| `OLLAMA_NUM_PARALLEL` > 1 | `swarmxq-startup-ops-architect` → reset to 1 before any inference test (INV-08 / INV-14) |
+| `OLLAMA_KV_CACHE_TYPE` modified without validation | `swarmxq-startup-ops-architect` → conservative CPU default is `f16`; opt in to `q8_0` only after host validation |
 | Legacy operator name (`SENTINEL`, `CANVAS`, etc.) in code | `swarmxq-model-orchestrator` → replace with APEX-17 r8 name |
-| `COMFY_POLL_MAX_ATTEMPTS` as literal | `swarmxq-video-pipeline-architect` → derive from stage timeout |
+| `COMFY_POLL_MAX_ATTEMPTS` as literal | `swarmxq-video-pipeline-architect` → derive from stage timeout (INV-02) |
 | Cold-start ETA hard-coded in dashboard | `swarmxq-startup-ops-architect` → read from `/api/system/health` |
-| `RAM_CRITICAL_MB` or `MAX_CONCURRENT_JOBS` changed | Revert immediately — protected constants |
-| `certificationTier` assigned without `clampCertificationTier()` | `swarmxq-video-pipeline-architect` → fix; INV-15 |
+| `RAM_CRITICAL_MB`, `MAX_CONCURRENT_JOBS`, or `OLLAMA_NUM_PARALLEL` changed | Revert immediately — protected constants (INV-08) |
+| CPU load ratio >= 0.85 ignored | `swarmxq-model-orchestrator` → stall job admission/stage transition; INV-06 binding constraint |
+| `certificationTier` assigned without `clampCertificationTier()` | `swarmxq-video-pipeline-architect` → fix; INV-16 |
 | `HOOK_BLOCKLIST` defined in more than one file | `swarmxq-creative-director` → must import from `src/lib/creative-quality.ts` |
-| `sanitizeTextForFilter()` bypassed in render recipe | `swarmxq-video-pipeline-architect` → fix; INV-19 |
-| Audio output not loudness-normalized | `swarmxq-video-pipeline-architect` → wire through `masterAudio()`; INV-20 |
-| Template-aware QC skipped for production renderer | `swarmxq-video-pipeline-architect` → add `runTemplateQc()` call; INV-21 |
-| `UNCONDITIONAL_BLOCKERS` overridden by template tier | `swarmxq-video-pipeline-architect` → BLOCK; INV-21 — `MISSING_AUDIO` and `FIRST_FRAME_EMPTY` are never expected |
-| RetentionMap throws on high risk | `swarmxq-video-pipeline-architect` → fix; INV-22 — soft guard only, never throw |
+| `sanitizeTextForFilter()` bypassed in render recipe | `swarmxq-video-pipeline-architect` → fix; INV-20 |
+| Audio output not loudness-normalized | `swarmxq-video-pipeline-architect` → wire through `masterAudio()`; INV-21 |
+| Template-aware QC skipped for production renderer | `swarmxq-video-pipeline-architect` → add `runTemplateQc()` call; INV-22 |
+| `UNCONDITIONAL_BLOCKERS` overridden by template tier | `swarmxq-video-pipeline-architect` → BLOCK; INV-22 — `MISSING_AUDIO` and `FIRST_FRAME_EMPTY` are never expected |
+| RetentionMap throws on high risk | `swarmxq-video-pipeline-architect` → fix; INV-23 — soft guard only, never throw |

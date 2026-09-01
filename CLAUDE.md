@@ -1,22 +1,21 @@
 # AI Engineering Control System (Claude Code)
 # SwarmXQ — Autonomous Multi-Agent AI Orchestration Platform
-# Baseline: V6.2.63 · APEX-17 r8 · Hardware: 16 GB RAM (HP EliteBook 850 G3 · CPU-only · bare-metal Linux)
+# Baseline: V6.2.60 · APEX-17 r8 · Hardware: 16 GB RAM (HP EliteBook 850 G3 · CPU-only · bare-metal Linux)
 # Video Generator Principal Engineer Directive: V3.5.0
 # Lagos precision. Global scale.
 #
 # CHANGELOG
-# V3.5.1 (2026-08-05): V6.2.63 intent resilience patch:
-#   - Malformed sanitized intent JSON now falls back to a deterministic structured
-#     intent derived from the validated request while preserving model-attempt
-#     telemetry; transport and pressure failures still use existing retry/error paths.
-# V3.5.0 (2026-08-05): Reconciliation with V6.2.61–62 codebase reality:
-#   - Baseline, test counts, and latest memory-note pointer updated after dashboard
-#     motion/prosody usability and Composer fetch-classification hardening.
-#   - Ollama CPU tuning guidance corrected to match env.ts/startup-enhanced.sh:
-#     flash attention defaults off and KV cache stays f16 unless a host-specific
-#     validation explicitly opts in to a faster profile.
-#   - APEX-17 operator-map headers now align with r8 governance while preserving
-#     the same canonical runtime tags and Python mirror semantics.
+# V3.5.0 (2026-08-05): Reconciliation with V6.2.60 codebase reality & v3.1.0 Core Execution Directive:
+#   - Baseline, test counts (353 API / 58 dashboard tests), and memory-note pointer updated to V6.2.60
+#     (low-RAM auto-enable ESM-ordering fix, voiceProfileId/storyMode request contract + runtime wiring,
+#     dashboard quick-start/runtime-guidance UX).
+#   - 16 GB RAM baseline (INV-09) established as standard host profile (standard_cpu_16gb); 8 GB retained
+#     as low-RAM fallback via shouldAutoEnableLowRamMode().
+#   - Primary stalling constraint updated to CPU pressure floor (INV-06) (loadAvg1m / coreCount < 0.85),
+#     replacing RAM exhaustion as the binding constraint on 16 GB.
+#   - SINGLE-7B LOCK (INV-01) and MAX_CONCURRENT_JOBS=1 / OLLAMA_NUM_PARALLEL=1 (INV-08) strictly preserved.
+#   - Ollama CPU tuning guidance aligned with env.ts/startup-enhanced.sh: flash attention defaults off (0)
+#     and KV cache stays f16 unless host-specific validation explicitly opts in.
 # V3.4.0 (2026-07-24): Reconciliation with V6.2.50–53 codebase reality:
 #   - 39 skills confirmed on disk (swarmxq-ci-release-architect was missing from count)
 #   - Skill count, NEXUS baseline, slash commands, test counts all corrected to V6.2.53
@@ -108,13 +107,14 @@ answering questions about the codebase — execute this silently:**
 
 | Condition | Action |
 |---|---|
-| Requested change modifies `RAM_CRITICAL_MB` or `MAX_CONCURRENT_JOBS` | **BLOCK** — these are protected constants. State invariant. Refuse. |
-| Requested change adds `OLLAMA_NUM_PARALLEL > 1` | **BLOCK** — CPU cannot benefit. State INV-13. |
-| Requested change bypasses `sanitizeReasoningOutput()` | **BLOCK** — DeepSeek think blocks would corrupt structured output. |
-| Requested change adds a third promotion path that doesn't call `canPromoteTo()` | **BLOCK** — INV-15. State ceiling contract. |
-| Requested change adds scripting fallback that doesn't throw `SCRIPT_SCHEMA_INVALID` | **BLOCK** — INV-16. No safe stub can reach production tier. |
+| Requested change modifies `RAM_CRITICAL_MB` or `MAX_CONCURRENT_JOBS` | **BLOCK** — these are protected constants (INV-08). State invariant. Refuse. |
+| Requested change adds `OLLAMA_NUM_PARALLEL > 1` | **BLOCK** — CPU cannot benefit (INV-08 / INV-14). State invariant. |
+| Requested change bypasses `sanitizeReasoningOutput()` | **BLOCK** — DeepSeek think blocks would corrupt structured output (INV-04). |
+| Requested change ignores or bypasses CPU pressure floor (`loadAvg1m / coreCount < 0.85`) | **BLOCK** — CPU pressure floor is the binding stalling constraint on 16 GB (INV-06). |
+| Requested change adds a third promotion path that doesn't call `canPromoteTo()` | **BLOCK** — INV-16. State ceiling contract. |
+| Requested change adds scripting fallback that doesn't throw `SCRIPT_SCHEMA_INVALID` | **BLOCK** — INV-17. No safe stub can reach production tier. |
 | Committing without all quality gates passing | **BLOCK** — No gate may be bypassed. Document skip reason if offline. |
-| Adding `console.*` to `src/services/` or `src/routes/` | **BLOCK** — zero tolerance. Use `log.*`. |
+| Adding `console.*` to `src/services/` or `src/routes/` | **BLOCK** — zero tolerance (INV-07). Use `log.*`. |
 | Enabling `SWARMX_VIDEO_ALLOW_STUB_RENDER=1` in production env | **BLOCK** — never in production. |
 | Secret or credential visible in structured log payload | **BLOCK** — rotate credential immediately, do not commit. |
 | Requested change affects both `betting_intelligence.py` AND `core_engine.py` (SabiScore dual-engine rule) | **BLOCK** — SabiScore vertical only; not in this repository. |
@@ -189,7 +189,7 @@ SSE events. It MUST NOT:
 On client disconnect + reconnect: always re-fetch full job state via the REST
 endpoint before resubscribing to SSE — never assume the stream is resumable.
 
-**Confirmed dashboard routes (14 as of V6.2.49):**
+**Confirmed dashboard routes (14 as of V6.2.60):**
 `/`, `(dashboard)/`, `(dashboard)/video`, `(dashboard)/video/[id]`,
 `(dashboard)/series`, `(dashboard)/series/new`, `(dashboard)/series/[id]`,
 `(dashboard)/series/[id]/episodes/[episodeNumber]`,
@@ -573,20 +573,22 @@ Always load `motion-performance-architect` first, then `motion-interaction-archi
 - Avoid overengineering — add complexity only when it earns its maintenance cost
 - Dashboard uses **React 19** (not 18 — do not apply React 18-era constraints)
 - `maxTsServerMemory` must not exceed **6144** (half of 16 GB system RAM)
-- All code changes must include a degradation path that works at 8 GB RAM via `shouldAutoEnableLowRamMode()`
+- Target host baseline is **16 GB RAM** (`standard_cpu_16gb` profile, INV-09); all code changes must include a degradation path that works at 8 GB RAM via `shouldAutoEnableLowRamMode()` (INV-10)
+- The primary stalling constraint on 16 GB CPU-only hardware is the **CPU pressure floor (INV-06)** (`loadAvg1m / coreCount < 0.85`), not RAM exhaustion. Inference stalls when CPU load ratio reaches or exceeds 0.85
 - **Read affected files before writing any code.** Grep/cat before acting.
 
 ## Video Generation Pipeline (CRITICAL)
 
 - **Stage order is immutable**: `intent_classification → planning → scripting → storyboard_generation → render_assembly → finalizing`
 - **Post-pipeline** (non-blocking): `stageViralityAndCaption()` runs after finalizing
-- **`modelsUsed[stage]`** must be set inside each stage function immediately after `acquireModel()` resolves — never re-derived in `runStage()`
+- **`modelsUsed[stage]`** must be set inside each stage function immediately after `acquireModel()` resolves — never re-derived in `runStage()` (INV-03)
 - **AbortController per stage** via `stageController()` with `{ once: true }` listeners — zero listener accumulation
-- **`sanitizeReasoningOutput()`** must wrap every Ollama response before parsing — DeepSeek `<think>` blocks must never reach script, storyboard, or intent JSON
-- **Render backend**: FFmpeg unloads all Ollama models before starting — never skip `ModelOrchestrator.unloadModel()` loop
-- **ComfyUI poll ceiling**: derived from `STAGE_TIMEOUT_MS["render_assembly"] / COMFY_POLL_INTERVAL_MS` — never an independent literal
-- **Stage schema validation**: planning, scripting, storyboard validated via `validateStageResult()` in `stage-schemas.ts`; scripting failures throw `SCRIPT_SCHEMA_INVALID`; planning/storyboard fall to hard-coded defaults; all outcomes persisted in `job.stageValidationTrace`
-- **Renderer certification ceiling**: all `certificationTier` assignments route through `clampCertificationTier()` in `renderer-certification.ts`; downstream promotions use `canPromoteTo()`
+- **`sanitizeReasoningOutput()`** must wrap every Ollama response before parsing — DeepSeek `<think>` blocks must never reach script, storyboard, or intent JSON (INV-04)
+- **Intent malformed-JSON fallback**: `buildDeterministicIntentFallback()` on schema/JSON parse failure after model response (INV-05)
+- **Render backend**: FFmpeg unloads all Ollama models before starting — never skip `ModelOrchestrator.unloadModel()` loop (INV-11)
+- **ComfyUI poll ceiling**: derived from `STAGE_TIMEOUT_MS["render_assembly"] / COMFY_POLL_INTERVAL_MS` — never an independent literal (INV-02)
+- **Stage schema validation**: planning, scripting, storyboard validated via `validateStageResult()` in `stage-schemas.ts`; scripting failures throw `SCRIPT_SCHEMA_INVALID`; planning/storyboard fall to hard-coded defaults; all outcomes persisted in `job.stageValidationTrace` (INV-17)
+- **Renderer certification ceiling**: all `certificationTier` assignments route through `clampCertificationTier()` in `renderer-certification.ts`; downstream promotions use `canPromoteTo()` (INV-16)
 
 ## Creative Quality Gates (CRITICAL — from swarmxq-creative-director)
 
@@ -594,7 +596,7 @@ Always load `motion-performance-architect` first, then `motion-interaction-archi
 - **`[BODY]` section**: every sentence increases stakes; `[VISUAL: subject + motion + setting + mood + quality keywords]` required after visual moments; active voice only
 - **`[RESOLUTION]` section**: 1–2 sentences maximum; actionable, not a summary; resolves hook tension
 - **`[CTA]` section**: 5–8 words; specific to audience; never "like and subscribe" or generic imperatives
-- **TONE_RULES completeness**: must contain ALL 8 variants: `contrarian`, `urgent`, `educational`, `cinematic`, `warm`, `minimal`, `faceless_broll`, `kinetic_text`. Missing variants must be added before any pipeline change ships.
+- **TONE_RULES completeness**: must contain ALL 8 variants: `contrarian`, `urgent`, `educational`, `cinematic`, `warm`, `minimal`, `faceless_broll`, `kinetic_text`. Missing variants must be added before any pipeline change ships (INV-13).
 - **Virality overall formula**: `hookStrength×0.35 + completionProxy×0.25 + shareability×0.25 + seoScore×0.15` — never alter the weights without updating `VIRALITY_SCORE_RUBRIC`
 - **Caption `firstLine`**: ≤ 40 chars; no opener starting with "I", "My", "This", "We", "Our"
 - **Caption hashtags**: 3–5 total; ≤ 1 trending; at least 1 niche; not `#fyp`, not `#viral`
@@ -603,18 +605,19 @@ Always load `motion-performance-architect` first, then `motion-interaction-archi
 
 ## Model Orchestration (CRITICAL — SINGLE-7B LOCK)
 
-- **Only one 7B-class model may be inference-active simultaneously** — CPU-only hardware has one inference thread regardless of RAM
-- On 16 GB: `OLLAMA_MAX_LOADED_MODELS=2` is permitted — Pilot router (~3 GB) may be resident while a 7B model (~5 GB) runs. This is NOT concurrent inference
+- **Only one 7B-class model may be inference-active simultaneously (INV-01)** — CPU-only hardware has one inference thread regardless of RAM
+- On 16 GB: `OLLAMA_MAX_LOADED_MODELS=1` (or 2 for Pilot+7B dual-residency) is strictly enforced (INV-09) — Pilot router (~3 GB) may be resident while a 7B model (~5 GB) runs. This is NOT concurrent inference
 - `OLLAMA_KEEP_ALIVE=5m` for Pilot only; `OLLAMA_KEEP_ALIVE=0` for all 7B-class models after stage completion
-- `ModelOrchestrator.evictIncompatible()` must be called before every 7B model load
-- `RAM_CRITICAL_MB = 800` is a protected constant — never change it
-- `MAX_CONCURRENT_JOBS = 1` is a protected constant — never change it (CPU inference is serial)
-- All model tags must pass through `resolveCanonicalTag()` from `@swarmx/types/operator-map` before reaching the registry
+- `ModelOrchestrator.evictIncompatible()` must be called before every 7B model load (INV-01)
+- `RAM_CRITICAL_MB = 800` is a protected constant — never change it (INV-08)
+- `MAX_CONCURRENT_JOBS = 1` is a protected constant — never change it (CPU inference is strictly serial, `OLLAMA_NUM_PARALLEL=1`) (INV-08, INV-14)
+- **CPU pressure floor (`loadAvg1m / coreCount < 0.85`) is the primary stalling constraint (INV-06)** for job admission and stage execution, replacing RAM exhaustion on 16 GB
+- All model tags must pass through `resolveCanonicalTag()` from `@swarmx/types/operator-map` before reaching the registry (INV-07)
 - **Legacy aliases that must NEVER appear in production code**: `phi4-fast`, `deepseek-reasoner`, `qwen-worker`, `relay-router`, `scar-auditor`, `scar-lab`, `SENTINEL` (V5), `CANVAS` (V5), `LEDGER` (V5), `PROPHET` (V5), `EVOLVER` (V5)
 
 ## Fastify API
 
-- **`console.*` is prohibited** in `src/services/` and `src/routes/` — use `log.*` from `src/lib/logger.ts`
+- **`console.*` is prohibited** in `src/services/` and `src/routes/` — use `log.*` from `src/lib/logger.ts` (INV-07)
 - **All env reads** go through `src/lib/env.ts` (`loadEnv()`) — no ad-hoc `process.env[…]` for values with invariants
 - **Rate-limit bucket eviction** via unref'd `setInterval(2h)` — never allow `captionScoreBuckets` or `jobSubmitBuckets` to grow unbounded
 - **`requireVideoWriteAuth()`** must gate all `POST /api/video/*` mutation routes
@@ -670,9 +673,19 @@ Always load `motion-performance-architect` first, then `motion-interaction-archi
 | `FULL_PIPELINE_MIN_AVAILABLE_MB` | 6170 MB | `video-runtime-config.ts` | No |
 | `VIDEO_RAM_RESERVE_MB` | 800 MB | `video-runtime-config.ts` | No |
 | `LOW_RAM_VIDEO_MODEL` | `"instruct-phi4-lite-q4km-prod"` | `video-runtime-config.ts` | No |
-| `RAM_CRITICAL_MB` | 800 MB | `model-orchestrator.ts` | **YES** |
-| `MAX_CONCURRENT_JOBS` | 1 | `video-queue.ts` | **YES** |
-| `OLLAMA_MAX_LOADED_MODELS` | 2 (16 GB profile) | env / `startup-enhanced.sh` | No |
+| `RAM_CRITICAL_MB` | 800 MB | `model-orchestrator.ts` | **YES (INV-08)** |
+| `MAX_CONCURRENT_JOBS` | 1 | `video-queue.ts` | **YES (INV-08)** |
+| `OLLAMA_NUM_PARALLEL` | 1 | env / `startup-enhanced.sh` | **YES (INV-08 / INV-14)** |
+| `OLLAMA_MAX_LOADED_MODELS` | 1 (or 2 for Pilot+7B on 16 GB) / 1 (8 GB fallback) | env / `startup-enhanced.sh` | No (INV-09) |
+| `CPU_PRESSURE_FLOOR` | `loadAvg1m / coreCount < 0.85` | `runtime-guidance.ts` / health | **YES (INV-06 binding constraint)** |
+
+### 16 GB Hardware Assumptions & CPU Pressure Floor (INV-06, INV-08, INV-09)
+
+Under the **v3.1.0 Core Execution Directive**, the platform baseline is a 16 GB host profile (`standard_cpu_16gb`):
+1. **Binding Constraint is CPU Pressure (INV-06)**: On 16 GB RAM, RAM exhaustion is no longer the primary stalling constraint. Instead, the **CPU pressure floor (`loadAvg1m / coreCount < 0.85`)** is the primary stalling constraint. When CPU load ratio reaches or exceeds 0.85, inference times out; new job submissions and stage transitions must stall until CPU pressure drops.
+2. **Serial Execution & Protected Constants (INV-08)**: CPU inference is strictly serial (`OLLAMA_NUM_PARALLEL=1`, INV-14). `MAX_CONCURRENT_JOBS=1` and `RAM_CRITICAL_MB=800` remain strictly enforced and cannot be increased.
+3. **Model Residency (INV-09)**: `OLLAMA_MAX_LOADED_MODELS=1` (or 2 for Pilot+7B dual-residency) fits within the 16 GB budget (~8 GB combined resident RAM for Pilot + one 7B model), leaving ample RAM for OS, disk caches, and Redis.
+4. **8 GB Degradation (INV-10)**: 8 GB hosts are supported via low-RAM fallback (`shouldAutoEnableLowRamMode()` and `LOW_RAM_VIDEO_MODEL`), but 16 GB is the primary baseline.
 
 ### 16 GB Model Residency Budget
 
@@ -681,19 +694,19 @@ Always load `motion-performance-architect` first, then `motion-interaction-archi
 | Pilot (`instruct-phi4-pro-q8-prod`) alone | ~3 GB | ✓ |
 | Pilot + Architect (`plan-qwen25-pro-q5km-prod`) | ~8 GB | ✓ — target dual-resident state |
 | Pilot + Oracle (`reason-deepseekr1-pro-q5km-prod`) | ~8 GB | ✓ — virality scoring only |
-| Any two 7B-class models simultaneously | ~10 GB | ✗ — violates SINGLE-7B inference |
+| Any two 7B-class models simultaneously | ~10 GB | ✗ — violates SINGLE-7B inference (INV-01) |
 | All three text-stage models simultaneously | ~13 GB | ✗ — never load concurrently |
 | Relay + Pilot | ~5.5 GB | ✓ — viable but Relay rarely needs to stay warm |
 
-### Ollama CPU Performance Profile (CPU-only, 4-core, WSL2)
+### Ollama CPU Performance Profile (CPU-only, 4-core, WSL2/bare-metal)
 
 These variables are **required** for optimal CPU-only inference. Set in `startup-enhanced.sh`
 and validated via `env.ts`. Wrong values cause silent throughput degradation — no error is thrown.
 
 | Variable | Value | Rationale |
 |---|---|---|
-| `OLLAMA_NUM_PARALLEL` | `1` | CPU has one effective inference thread; parallelism > 1 adds scheduling overhead with zero throughput gain |
-| `OLLAMA_MAX_LOADED_MODELS` | `2` (16 GB) / `1` (8 GB) | Dual-resident on 16 GB only |
+| `OLLAMA_NUM_PARALLEL` | `1` | CPU has one effective inference thread; parallelism > 1 adds scheduling overhead with zero throughput gain (INV-08 / INV-14) |
+| `OLLAMA_MAX_LOADED_MODELS` | `1` (or `2` for Pilot+7B on 16 GB) / `1` (8 GB) | Dual-resident on 16 GB only (INV-09) |
 | `OLLAMA_FLASH_ATTENTION` | `0` | Conservative CPU default; operators may opt in only after a measured host-specific AVX2 compatibility pass |
 | `OLLAMA_KV_CACHE_TYPE` | `f16` | Conservative CPU default paired with flash-attention off; do not switch to quantized KV without validation on the target host |
 | `OLLAMA_NUM_THREADS` | `3` (WSL2) / `4` (bare-metal) | Leave 1 core for OS + WSL2 hypervisor; detect via `grep -qi microsoft /proc/version` |
@@ -702,10 +715,11 @@ and validated via `env.ts`. Wrong values cause silent throughput degradation —
 > **Bare-metal detection**: `grep -qi microsoft /proc/version && THREADS=3 || THREADS=4`
 > Bare-metal confirmed at V6.2.44 — use `OLLAMA_NUM_THREADS=4` when not under WSL2 hypervisor.
 
-### APEX-17 r8 Full Operator Registry
+### APEX-17 r8 Full Operator Registry (7-Operator Taxonomy)
 
 `MODEL_OPERATOR_MAP` is the single source of truth. Both `operator-map.ts` (TypeScript) and
-`operator_map.py` (Python) must remain semantically identical.
+`operator_map.py` (Python) must remain semantically identical. The 7-operator taxonomy fits
+within the 16 GB baseline and CPU constraints without relaxing the **SINGLE-7B LOCK (INV-01)**.
 
 | Operator | Canonical tag | is7B? | Video role |
 |---|---|---|---|
@@ -969,8 +983,8 @@ Execute these steps before closing any session where code was written:
 pnpm -F swarmx-api tsc --noEmit
 pnpm -F swarmx-types tsc --noEmit
 pnpm -F swarmx-dashboard tsc --noEmit
-pnpm -F swarmx-api vitest run              # must be ≥355 (as of V6.2.62)
-pnpm -F swarmx-dashboard vitest run        # must be ≥65
+pnpm -F swarmx-api vitest run              # must be ≥353 (as of V6.2.60)
+pnpm -F swarmx-dashboard vitest run        # must be ≥58
 npx tsx apps/swarmx-api/scripts/video-regression-check.ts
 npx tsx apps/swarmx-api/scripts/system-health-regression.ts
 npx tsx apps/swarmx-api/scripts/reasoning-sanitizer-regression.ts
@@ -1033,8 +1047,8 @@ pnpm -F swarmx-api tsc --noEmit           # zero type errors
 pnpm -F swarmx-types tsc --noEmit         # zero type errors
 pnpm -F swarmx-dashboard tsc --noEmit     # zero type errors
 
-pnpm -F swarmx-dashboard vitest run       # ≥65 passing
-pnpm -F swarmx-api vitest run             # ≥355 passing (V6.2.62 baseline; grows with V4 slices)
+pnpm -F swarmx-dashboard vitest run       # ≥58 passing
+pnpm -F swarmx-api vitest run             # ≥353 passing (V6.2.60 baseline; grows with V4 slices)
 
 # API regression scripts (no Ollama/Redis needed)
 npx tsx apps/swarmx-api/scripts/adaptive-timeout-regression.ts
@@ -1110,15 +1124,15 @@ Push only after all quality gates pass.
 | ~~1~~ | ~~**BullMQ Default-On**~~ | ✅ V6.2.22+V6.2.40 |
 | ~~2~~ | ~~**GitHub Actions CI**~~ | ✅ V6.2.40 |
 | ~~3~~ | ~~**Env Schema Expansion**~~ | ✅ V6.2.38 — ≤10 process.env hits, all documented |
-| ~~4~~ | ~~**First API Unit Tests**~~ | ✅ V6.2.39 — seeded API unit coverage; current V6.2.62 baseline is 355 tests |
+| ~~4~~ | ~~**First API Unit Tests**~~ | ✅ V6.2.39 — seeded API unit coverage; current V6.2.60 baseline is 353 tests |
 | ~~5~~ | ~~**16 GB Profile Config**~~ | ✅ V6.2.44 — startup-enhanced.sh complete |
 | ~~6~~ | ~~**TONE_RULES Completeness Audit**~~ | ✅ V6.2.23 — all 8 variants CI-gated |
 | ~~7~~ | ~~**Smoke Renderer Certification Ceiling + Per-Stage Zod Validation**~~ | ✅ V6.2.49 |
 | ~~8~~ | ~~**S1: Voice Benchmark**~~ | ✅ V6.2.49 — CLI + report reader + ranker + /api/system/health block |
-| ~~9~~ | ~~**SCAR-X V5.0.0 P1 Hygiene**~~ | ✅ V6.2.50 — HOOK_BLOCKLIST consolidated, QUICK_DRAFT mode, INV-18 transitions, doctor CLI scaffolded |
+| ~~9~~ | ~~**SCAR-X V5.0.0 P1 Hygiene**~~ | ✅ V6.2.50 — HOOK_BLOCKLIST consolidated, QUICK_DRAFT mode, INV-19 transitions, doctor CLI scaffolded |
 | ~~10~~ | ~~**P1 Creative Intelligence**~~ | ✅ V6.2.51 — hook laboratory (10 families), concept tournament (Levenshtein diversity), RetentionMap (7 beats), scene DSL + render recipe compiler |
 | ~~11~~ | ~~**P1 Completion + Audio**~~ | ✅ V6.2.52 — tournament 11-axis diversity, EBU R128 audio mastering, template-aware QC, path traversal fix |
-| ~~12~~ | ~~**Integrations + UX**~~ | ✅ V6.2.53–V6.2.62 — template-aware QC, RetentionMap preview, RuntimeCapabilityStrip, video dashboard motion/prosody UX, Composer fetch classification |
+| ~~12~~ | ~~**Integrations + UX**~~ | ✅ V6.2.53–V6.2.60 — template-aware QC, RetentionMap preview, RuntimeCapabilityStrip, video runtime guidance, voice profile routing |
 | **13** | **S5: Golden-Path Re-Cert** | Clean clone → real MP4 from production renderer → `/api/system/health` shows voice.benchmark + runtime profile; `stageValidationTrace` populated; cert tier ≥ `PRODUCTION_PACK_VALID`; template-aware QC runs |
 | **14** | **S2: Template Family Expansion (+8 templates)** | myth-vs-fact, list/countdown, mystery/reveal, product-demo, quote-to-insight, chart/data, motivational, series-recap all wired as selectable `templateFamily` in `VideoJobRequest`; each has tone mapping + storyboard style hints |
 | **15** | **Ollama JSON-mode Migration** | CPU JSON-mode reliability benchmark run first (< 5% parse failure rate required); if passes: `planning` and `storyboard_generation` stages migrated from regex extraction to `format: "json"` in Ollama request; regression scripts updated |
@@ -1135,23 +1149,24 @@ While executing any milestone, continuously scan for violations. Each tier has a
 
 ## Critical — Fix in the current session before committing anything else
 
-- `console.*` in `src/services/` or `src/routes/` → migrate to `log.*` immediately
-- Ollama response parsed without `sanitizeReasoningOutput()` → wrap it
-- `ctx.modelsUsed[stage]` set in `runStage()` instead of inside stage fn → move it
+- `console.*` in `src/services/` or `src/routes/` → migrate to `log.*` immediately (INV-07)
+- Ollama response parsed without `sanitizeReasoningOutput()` → wrap it (INV-04)
+- `ctx.modelsUsed[stage]` set in `runStage()` instead of inside stage fn → move it (INV-03)
 - AbortController listener without `{ once: true }` → add the flag
-- Legacy alias tags in any code path → replace with canonical
-- `evictIncompatible()` not called before a 7B load → add the call
-- `COMFY_POLL_MAX_ATTEMPTS` as a hardcoded literal → derive from stage timeout
-- FFmpeg render without `ModelOrchestrator.unloadModel()` loop → add eviction
-- `RAM_CRITICAL_MB` or `MAX_CONCURRENT_JOBS` changed from protected values → revert
+- Legacy alias tags in any code path → replace with canonical (INV-07)
+- `evictIncompatible()` not called before a 7B load → add the call (INV-01)
+- `COMFY_POLL_MAX_ATTEMPTS` as a hardcoded literal → derive from stage timeout (INV-02)
+- FFmpeg render without `ModelOrchestrator.unloadModel()` loop → add eviction (INV-11)
+- `RAM_CRITICAL_MB`, `MAX_CONCURRENT_JOBS`, or `OLLAMA_NUM_PARALLEL` changed from protected values → revert (INV-08)
+- CPU pressure floor (`loadAvg1m / coreCount < 0.85`) ignored → stall admission/transitions (INV-06)
 - `[HOOK]` section > 18 words in any stage output → tighten the prompt constraint
-- `TONE_RULES` missing a tone variant → add it before anything else ships
+- `TONE_RULES` missing a tone variant → add it before anything else ships (INV-13)
 - V5 operator names (`SENTINEL`, `CANVAS`, etc.) in any code → replace with APEX-17 r8 names
-- `OLLAMA_NUM_PARALLEL > 1` anywhere → reset to 1; CPU cannot benefit from parallelism
-- `certificationTier` assigned directly without routing through `clampCertificationTier()` → fix immediately
-- Third promotion path added without calling `canPromoteTo()` → BLOCK and fix
-- `selectVoiceProvider()` bypasses benchmark report when `SWARMX_TTS_PROVIDER=auto` → fix
-- `neural_local` rated below `synthetic_fallback` in any ranking logic → fix (RTF cannot override tier preference)
+- `OLLAMA_NUM_PARALLEL > 1` anywhere → reset to 1; CPU cannot benefit from parallelism (INV-08 / INV-14)
+- `certificationTier` assigned directly without routing through `clampCertificationTier()` → fix immediately (INV-16)
+- Third promotion path added without calling `canPromoteTo()` → BLOCK and fix (INV-16)
+- `selectVoiceProvider()` bypasses benchmark report when `SWARMX_TTS_PROVIDER=auto` → fix (INV-18)
+- `neural_local` rated below `synthetic_fallback` in any ranking logic → fix (RTF cannot override tier preference) (INV-18)
 - `stageValidationTrace` not initialized as `[]` on new VideoJob creation → fix
 
 ## High Impact — Add to next session's milestone queue if found
@@ -1159,7 +1174,7 @@ While executing any milestone, continuously scan for violations. Each tier has a
 - `video-cleanup.ts` cleanup interval not started at server boot
 - `resumeJob()` not validating `fromStage` against artifact availability before re-queueing
 - `stageViralityAndCaption()` result not persisted to BullMQ job data on completion
-- `OLLAMA_MAX_LOADED_MODELS` still at 1 in production env (blocks 16 GB dual-resident path)
+- `OLLAMA_MAX_LOADED_MODELS` still at 1 on 16 GB host (blocks Pilot+7B dual-resident path, INV-09)
 - Ollama perf vars not set before starting Ollama service
 - ComfyUI `totalFrames` hard-floored at 16 when `availableMb` > 8 000 (Priority 5 unlocks)
 - Missing OTel trace spans around `runOrchestration()` lifecycle
@@ -1167,7 +1182,7 @@ While executing any milestone, continuously scan for violations. Each tier has a
 - Voice benchmark not re-run after Kokoro or Piper install/upgrade
 - `AssetLicense` metadata absent from b-roll assets used in `faceless_broll` renders
 - `SWARMX_SCRIPT_DRIFT_THRESHOLD` not wired into video-regression-check.ts
-- Cert-tier state machine: `BLOCKED` and `NEEDS_REVISION` tiers entered via direct assignment, not transition function
+- Cert-tier state machine: `BLOCKED` and `NEEDS_REVISION` tiers entered via direct assignment, not transition function (INV-19)
 
 ## Medium Impact — Log in memory note; address opportunistically
 
@@ -1181,7 +1196,7 @@ While executing any milestone, continuously scan for violations. Each tier has a
 
 ---
 
-# VERIFIED GROUND TRUTH (V6.2.49 — 2026-07-23)
+# VERIFIED GROUND TRUTH (V6.2.60 — 2026-08-05)
 
 Repository code overrides all prior documentation. Grep/read before acting.
 
@@ -1193,26 +1208,26 @@ Repository code overrides all prior documentation. Grep/read before acting.
 | Env fail-fast (`src/lib/env.ts`) | Zod schema for ~80 vars including SWARMX_VOICE_BENCHMARK_FILE; `loadEnv()` wired in `server.ts` |
 | Global error handlers (`server.ts`) | `unhandledRejection` + `uncaughtException` → structured fatal log + exit(1) |
 | Rate-limit eviction (`src/routes/video.ts`) | Unref'd `setInterval(2h)` evicts stale `captionScoreBuckets` + `jobSubmitBuckets` |
-| Video orchestrator r8 (`video-orchestrator.ts`) | VOT-09 through VOT-13 correctness pass + INV-16 stage schema validation |
-| Video queue SINGLE-VIDEO LOCK | `MAX_CONCURRENT_JOBS=1` enforced; idempotency by `clientRequestId`; 4h TTL cleanup |
-| Stage schema validation | `stage-schemas.ts` validates planning/scripting/storyboard; `SCRIPT_SCHEMA_INVALID` on scripting failure |
-| Renderer certification ceiling | `renderer-certification.ts` clamps all tier assignments; `ffmpeg_text_smoke → TECHNICALLY_VALID` |
-| Voice benchmark infrastructure | `voice-benchmark.ts` CLI + `voice-benchmark-report.ts` reader + `selectVoiceProvider()` report integration + `/api/system/health` `voice.benchmark` block |
-| TONE_RULES all 8 variants | CI grep gate confirms all 8 present: `contrarian`, `urgent`, `educational`, `cinematic`, `warm`, `minimal`, `faceless_broll`, `kinetic_text` |
-| API tests | 355 passing (V6.2.62) across 23 test files |
+| Video orchestrator r8 (`video-orchestrator.ts`) | VOT-09 through VOT-13 correctness pass + INV-17 stage schema validation + deterministic intent fallback |
+| Video queue SINGLE-VIDEO LOCK | `MAX_CONCURRENT_JOBS=1` enforced (INV-08); idempotency by `clientRequestId`; 4h TTL cleanup |
+| Stage schema validation | `stage-schemas.ts` validates planning/scripting/storyboard; `SCRIPT_SCHEMA_INVALID` on scripting failure (INV-17) |
+| Renderer certification ceiling | `renderer-certification.ts` clamps all tier assignments; `ffmpeg_text_smoke → TECHNICALLY_VALID` (INV-16) |
+| Voice benchmark infrastructure | `voice-benchmark.ts` CLI + `voice-benchmark-report.ts` reader + `selectVoiceProvider()` report integration + `/api/system/health` `voice.benchmark` block (INV-18) |
+| TONE_RULES all 8 variants | CI grep gate confirms all 8 present: `contrarian`, `urgent`, `educational`, `cinematic`, `warm`, `minimal`, `faceless_broll`, `kinetic_text` (INV-13) |
+| API tests | 353 passing (V6.2.60) across 22 test files |
 | Dashboard build | 14 routes, zero build errors |
 | APEX-17 r8 operator map | Both `operator-map.ts` and `operator_map.py` semantically identical; V5 names eliminated |
 | HOOK_BLOCKLIST consolidated | `src/lib/creative-quality.ts` — single source; imported by orchestrator + preproducer |
 | QUICK_DRAFT execution mode | 6th mode in `CreativeFactoryExecutionMode`; wired in workflow with cert ceiling |
 | Hook laboratory | `src/lib/hook-laboratory.ts` — 10 families, 18-word validation, forbidden-opener regex |
 | Concept tournament | `src/services/creative-tournament.ts` — 11-axis fingerprint, Levenshtein diversity, winner + backup |
-| RetentionMap | `src/services/retention-map.ts` — 7-beat timing, thin-content upgrade, soft guard per INV-16 |
-| Scene DSL + render recipe compiler | `src/services/render-recipe-compiler.ts` — SHA-256 validation, SRT path traversal defense, FFmpeg metachar sanitization |
-| EBU R128 audio mastering | `src/services/audio-mastering.ts` — two-pass spawnSync, 5 platform profiles (youtube/tiktok/reels/shorts/broadcast) |
-| Template-aware QC | `src/services/template-aware-qc.ts` — per-tier finding interpretation; wired into ffmpeg-video-renderer |
-| INV-18 transition functions | `transitionToPublishing()`, `transitionToPublishFailed()`, `transitionToBlocked()`, `transitionToNeedsRevision()` — all 4 exist |
+| RetentionMap | `src/services/retention-map.ts` — 7-beat timing, thin-content upgrade, soft guard per INV-23 |
+| Scene DSL + render recipe compiler | `src/services/render-recipe-compiler.ts` — SHA-256 validation, SRT path traversal defense, FFmpeg metachar sanitization (INV-20) |
+| EBU R128 audio mastering | `src/services/audio-mastering.ts` — two-pass spawnSync, 5 platform profiles (youtube/tiktok/reels/shorts/broadcast) (INV-21) |
+| Template-aware QC | `src/services/template-aware-qc.ts` — per-tier finding interpretation; wired into ffmpeg-video-renderer (INV-22) |
+| INV-19 transition functions | `transitionToPublishing()`, `transitionToPublishFailed()`, `transitionToBlocked()`, `transitionToNeedsRevision()` — all 4 exist |
 | Doctor CLI | `scripts/doctor.ts` — 6 checks (env, Redis, Ollama, RAM, voice probe, benchmark freshness) |
-| Runtime profiles | `src/services/runtime-profiles.ts` — `constrained_cpu_8gb`, `standard_cpu_16gb`, `accelerated_optional` |
+| Runtime profiles | `src/services/runtime-profiles.ts` — `constrained_cpu_8gb`, `standard_cpu_16gb`, `accelerated_optional` (INV-09) |
 | RuntimeCapabilityStrip | Dashboard component showing Ollama/RAM/Warmup/Voice status in top bar |
 | RetentionMap preview | `POST /api/video/factory/retention-map/preview` endpoint |
 
@@ -1223,7 +1238,7 @@ Repository code overrides all prior documentation. Grep/read before acting.
 | ~~BullMQ disabled by default~~ | ✅ V6.2.22+V6.2.40 | done |
 | ~~Zero CI~~ | ✅ V6.2.40 | done |
 | ~~`process.env[…]` scattered in services~~ | ✅ V6.2.38 | done |
-| ~~Zero API unit tests~~ | ✅ V6.2.62 — 355 API tests | done |
+| ~~Zero API unit tests~~ | ✅ V6.2.60 — 353 API tests | done |
 | ~~`startup-enhanced.sh` not wired for 16 GB~~ | ✅ V6.2.44 | done |
 | ~~TONE_RULES completeness unverified~~ | ✅ V6.2.23 | done |
 | ~~HOOK_BLOCKLIST duplicated~~ | ✅ V6.2.50 — consolidated to `src/lib/creative-quality.ts` | done |
@@ -1247,51 +1262,51 @@ Repository code overrides all prior documentation. Grep/read before acting.
 
 # CRITICAL INVARIANTS (NON-NEGOTIABLE — NEVER VIOLATE)
 
-1. **SINGLE-7B LOCK**: Only one 7B-class model inference-active simultaneously. On 16 GB: `OLLAMA_MAX_LOADED_MODELS=2` allows Pilot resident + 7B active — NOT two inferences. `evictIncompatible()` before every 7B load.
+1. **INV-01 (SINGLE-7B LOCK)**: Only one 7B-class model inference-active simultaneously. On 16 GB: `OLLAMA_MAX_LOADED_MODELS=1` (or 2 for Pilot+7B dual-residency) allows Pilot resident (~3 GB) + 7B active (~5 GB) — NOT two concurrent inferences. `evictIncompatible()` before every 7B load.
 
-2. **Dual-timeout coordination**: `COMFY_POLL_MAX_ATTEMPTS = Math.floor(STAGE_TIMEOUT_MS["render_assembly"] / COMFY_POLL_INTERVAL_MS)`. Never an independent literal.
+2. **INV-02 (Dual-timeout coordination)**: `COMFY_POLL_MAX_ATTEMPTS = Math.floor(STAGE_TIMEOUT_MS["render_assembly"] / COMFY_POLL_INTERVAL_MS)`. Never an independent literal.
 
-3. **`modelsUsed[stage]` in stage fn**: Set immediately after `acquireModel()` inside the stage function. Never re-derived in `runStage()`.
+3. **INV-03 (`modelsUsed[stage]` in stage fn)**: Set immediately after `acquireModel()` inside the stage function. Never re-derived in `runStage()`.
 
-4. **`sanitizeReasoningOutput()` on every Ollama response**: DeepSeek `<think>` blocks must never reach intent JSON, script text, or storyboard frames.
+4. **INV-04 (`sanitizeReasoningOutput()` mandatory)**: DeepSeek `<think>` blocks must never reach intent JSON, script text, or storyboard frames. Use `extractJson()`.
 
-5. **Intent malformed-JSON fallback**: Intent classification must attempt sanitized strict JSON first. If parsing/schema validation fails after a model response, use `buildDeterministicIntentFallback()` rather than failing the entire job; transport, cancellation, and pressure failures still use existing retry/error paths.
+5. **INV-05 (Intent malformed-JSON fallback)**: Intent classification must attempt sanitized strict JSON first. If parsing/schema validation fails after a model response, use `buildDeterministicIntentFallback()` rather than failing the entire job; transport, cancellation, and pressure failures still use existing retry/error paths.
 
-6. **`console.*` zero tolerance**: `grep -rn 'console\.' apps/swarmx-api/src/{services,routes}` → zero hits, always.
+6. **INV-06 (CPU pressure floor admission gate)**: On 16 GB hardware, the primary stalling constraint is the CPU pressure floor (`loadAvg1m / coreCount < 0.85`), not RAM exhaustion. When CPU load ratio reaches or exceeds 0.85, pipeline stages risk timeout; new job admissions and stage transitions must stall until CPU pressure drops below the floor.
 
-7. **`resolveCanonicalTag()` on every external tag**: Legacy aliases must never enter the registry or any log entry.
+7. **INV-07 (`console.*` zero tolerance)**: `grep -rn 'console\.' apps/swarmx-api/src/{services,routes}` → zero hits, always. Use `log.*` from `src/lib/logger.ts`. All external model tags must pass through `resolveCanonicalTag()`.
 
-8. **`RAM_CRITICAL_MB = 800` is protected**: Below this → `PRESSURE_CRITICAL` failure. Do not change.
+8. **INV-08 (Protected constants & serial execution)**: `MAX_CONCURRENT_JOBS = 1`, `RAM_CRITICAL_MB = 800`, and `OLLAMA_NUM_PARALLEL = 1` are protected constants and strictly enforced. CPU inference is strictly serial; increasing concurrency adds context-switching overhead with zero throughput gain.
 
-9. **`MAX_CONCURRENT_JOBS = 1` is protected**: CPU inference is serial. Increasing this degrades output quality without throughput gain.
+9. **INV-09 (16 GB RAM baseline)**: Baseline host profile is 16 GB RAM (`standard_cpu_16gb`). `OLLAMA_MAX_LOADED_MODELS=1` (or 2 for Pilot+7B dual-residency) is enforced. 8 GB hosts are supported via low-RAM fallback (`shouldAutoEnableLowRamMode()`), but 16 GB is the primary baseline.
 
-10. **16 GB changes must degrade at 8 GB**: `shouldAutoEnableLowRamMode()` is the contract boundary. Test both paths when modifying RAM-sensitive code.
+10. **INV-10 (16 GB changes must degrade at 8 GB)**: `shouldAutoEnableLowRamMode()` is the contract boundary. Test both paths when modifying RAM-sensitive code.
 
-11. **FFmpeg evicts Ollama before render**: `ModelOrchestrator.unloadModel()` loop must run before every FFmpeg render — never skip it.
+11. **INV-11 (FFmpeg evicts Ollama before render)**: `ModelOrchestrator.unloadModel()` loop must run before every FFmpeg render — never skip it.
 
-12. **Read before acting**: Grep and cat affected files before writing any code. Never act on assumptions — the repository is the source of truth.
+12. **INV-12 (Read before acting)**: Grep and cat affected files before writing any code. Never act on assumptions — the repository is the source of truth.
 
-13. **TONE_RULES must be exhaustive**: Every `VideoJobRequest.tone` variant must have a corresponding entry in `TONE_RULES`. Missing entries produce degraded output silently.
+13. **INV-13 (TONE_RULES must be exhaustive)**: Every `VideoJobRequest.tone` variant (all 8 variants) must have a corresponding entry in `TONE_RULES`. Missing entries produce degraded output silently.
 
-14. **`OLLAMA_NUM_PARALLEL=1` is invariant on CPU**: This is not configurable — CPU has one inference thread. Any value > 1 silently degrades throughput without error.
+14. **INV-14 (`OLLAMA_NUM_PARALLEL=1` is invariant on CPU)**: This is not configurable — CPU has one inference thread. Any value > 1 silently degrades throughput without error.
 
-15. **startup-enhanced.sh must exit 1 on overload**: If post-warmup RAM < `FULL_PIPELINE_MIN_AVAILABLE_MB`, exit 1 immediately. Never allow the API to start on an overloaded host.
+15. **INV-15 (startup-enhanced.sh must exit 1 on overload)**: If post-warmup RAM < `FULL_PIPELINE_MIN_AVAILABLE_MB`, exit 1 immediately. Never allow the API to start on an overloaded host.
 
-16. **Smoke renderer certification ceiling**: `ffmpeg_text_smoke` cannot certify above `TECHNICALLY_VALID`. Every `certificationTier` assignment routes through `clampCertificationTier()` in `apps/swarmx-api/src/services/renderer-certification.ts`. Downstream promotions must use `canPromoteTo()`. Any new promotion site must be added to the sites list in `creative-factory-certification.ts` comments.
+16. **INV-16 (Smoke renderer certification ceiling)**: `ffmpeg_text_smoke` cannot certify above `TECHNICALLY_VALID`. Every `certificationTier` assignment routes through `clampCertificationTier()` in `apps/swarmx-api/src/services/renderer-certification.ts`. Downstream promotions must use `canPromoteTo()`. Any new promotion site must be added to the sites list in `creative-factory-certification.ts` comments.
 
-17. **Per-stage schema validation for planning/scripting/storyboard**: Planning, scripting, and storyboard results are validated against Zod schemas in `apps/swarmx-api/src/services/stage-schemas.ts` before being persisted. Failures on planning and storyboard fall through to hard-coded safe defaults and are recorded in `job.stageValidationTrace`. Failure on scripting throws `SCRIPT_SCHEMA_INVALID` — there is no safe scripted default that can reach a production tier.
+17. **INV-17 (Per-stage schema validation for planning/scripting/storyboard)**: Planning, scripting, and storyboard results are validated against Zod schemas in `apps/swarmx-api/src/services/stage-schemas.ts` before being persisted. Failures on planning and storyboard fall through to hard-coded safe defaults and are recorded in `job.stageValidationTrace`. Failure on scripting throws `SCRIPT_SCHEMA_INVALID` — there is no safe scripted default that can reach a production tier.
 
-18. **Voice provider selection is benchmark-informed**: When `SWARMX_TTS_PROVIDER=auto`, `selectVoiceProvider()` consults the JSON benchmark report at `SWARMX_VOICE_BENCHMARK_FILE` (default `/tmp/swarmxq-voice-benchmark.json`) to rank providers before probing. The report is generated by `apps/swarmx-api/scripts/voice-benchmark.ts` and expires after `SWARMX_VOICE_BENCHMARK_MAX_AGE_HOURS` (default 168 h). Without a fresh report the current default order (Kokoro → Piper → eSpeak) is preserved. The `neural_local` tier is always preferred over `synthetic_fallback` regardless of RTF — eSpeak may have lower RTF but is not a production voice. Kokoro voice selection uses `KOKORO_VOICE_MAP` keyed by tone.
+18. **INV-18 (Voice provider selection is benchmark-informed)**: When `SWARMX_TTS_PROVIDER=auto`, `selectVoiceProvider()` consults the JSON benchmark report at `SWARMX_VOICE_BENCHMARK_FILE` (default `/tmp/swarmxq-voice-benchmark.json`) to rank providers before probing. The report is generated by `apps/swarmx-api/scripts/voice-benchmark.ts` and expires after `SWARMX_VOICE_BENCHMARK_MAX_AGE_HOURS` (default 168 h). Without a fresh report the current default order (Kokoro → Piper → eSpeak) is preserved. The `neural_local` tier is always preferred over `synthetic_fallback` regardless of RTF — eSpeak may have lower RTF but is not a production voice. Kokoro voice selection uses `KOKORO_VOICE_MAP` keyed by tone.
 
-19. **Cert-tier state machine transitions are explicit**: Four transition functions exist in `renderer-certification.ts`: `transitionToPublishing()`, `transitionToPublishFailed()`, `transitionToBlocked()`, `transitionToNeedsRevision()`. `LATERAL_TERMINAL_TIERS` prevents invalid lateral moves. All four functions must be used for state transitions — never assign these tiers directly without going through the transition function. ✅ V6.2.50 implemented.
+19. **INV-19 (Cert-tier state machine transitions are explicit)**: Four transition functions exist in `renderer-certification.ts`: `transitionToPublishing()`, `transitionToPublishFailed()`, `transitionToBlocked()`, `transitionToNeedsRevision()`. `LATERAL_TERMINAL_TIERS` prevents invalid lateral moves. All four functions must be used for state transitions — never assign these tiers directly without going through the transition function. ✅ V6.2.50 implemented.
 
-20. **Render recipe compiler security**: All free-text `SceneSpec` fields must be sanitized by `sanitizeTextForFilter()` in `render-recipe-compiler.ts` before reaching FFmpeg arguments. Asset references must pass SHA-256 validation via `validateAssetHash()`. SRT/VTT paths must pass `validateSrtPath()` (path traversal defense: `..` segments and unsafe characters are rejected). `safeFilterTokens` in `ValidatedRenderRecipe` contains only enum-derived values — never free-text from model output. Model output must never reach raw FFmpeg filter graphs.
+20. **INV-20 (Render recipe compiler security)**: All free-text `SceneSpec` fields must be sanitized by `sanitizeTextForFilter()` in `render-recipe-compiler.ts` before reaching FFmpeg arguments. Asset references must pass SHA-256 validation via `validateAssetHash()`. SRT/VTT paths must pass `validateSrtPath()` (path traversal defense: `..` segments and unsafe characters are rejected). `safeFilterTokens` in `ValidatedRenderRecipe` contains only enum-derived values — never free-text from model output. Model output must never reach raw FFmpeg filter graphs.
 
-20. **EBU R128 audio mastering is two-pass**: `masterAudio()` in `audio-mastering.ts` runs FFmpeg pass 1 (measure input loudness) then pass 2 (apply linear loudness normalization to target LUFS). Five platform profiles are defined: `youtube` (-14 LUFS), `tiktok` (-14), `reels` (-16), `shorts` (-14), `broadcast` (-23). True-peak ceiling is -1.0 dBTP for all profiles. FFmpeg args are built as arrays passed to `spawnSync()` — never string interpolation.
+21. **INV-21 (EBU R128 audio mastering is two-pass)**: `masterAudio()` in `audio-mastering.ts` runs FFmpeg pass 1 (measure input loudness) then pass 2 (apply linear loudness normalization to target LUFS). Five platform profiles are defined: `youtube` (-14 LUFS), `tiktok` (-14), `reels` (-16), `shorts` (-14), `broadcast` (-23). True-peak ceiling is -1.0 dBTP for all profiles. FFmpeg args are built as arrays passed to `spawnSync()` — never string interpolation.
 
-21. **Template-aware QC interprets, never overrides**: `template-aware-qc.ts` maps raw detector findings (black frames, freeze frames) to renderer-tier-specific interpretations. Template context may downgrade severity (e.g., dark backgrounds in `ffmpeg_kinetic_text` are expected). But `UNCONDITIONAL_BLOCKERS` (`MISSING_AUDIO`, `FIRST_FRAME_EMPTY`) cannot be overridden by any template tier — they are always blockers.
+22. **INV-22 (Template-aware QC interprets, never overrides)**: `template-aware-qc.ts` maps raw detector findings (black frames, freeze frames) to renderer-tier-specific interpretations. Template context may downgrade severity (e.g., dark backgrounds in `ffmpeg_kinetic_text` are expected). But `UNCONDITIONAL_BLOCKERS` (`MISSING_AUDIO`, `FIRST_FRAME_EMPTY`) cannot be overridden by any template tier — they are always blockers.
 
-22. **RetentionMap is a soft guard**: `generateRetentionMap()` in `retention-map.ts` produces a 7-beat time-coded risk assessment. Beats with fewer than `MIN_WORDS_PER_BEAT` words are upgraded from `MEDIUM` to `HIGH` risk (thin-content signal). `unrecoveredHighRiskCount > 0` emits a `stageValidationTrace` warn entry — it does NOT throw. Only scripting failures throw (per INV-16).
+23. **INV-23 (RetentionMap is a soft guard)**: `generateRetentionMap()` in `retention-map.ts` produces a 7-beat time-coded risk assessment. Beats with fewer than `MIN_WORDS_PER_BEAT` words are upgraded from `MEDIUM` to `HIGH` risk (thin-content signal). `unrecoveredHighRiskCount > 0` emits a `stageValidationTrace` warn entry — it does NOT throw. Only scripting failures throw (per INV-17).
 
 ---
 

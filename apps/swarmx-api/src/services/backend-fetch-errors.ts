@@ -20,9 +20,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
-}
 
 function codeFromReason(reason: unknown): string | undefined {
   return typeof reason === "object" && reason !== null && "code" in reason
@@ -40,9 +37,6 @@ export function classifyBackendFetchError(
     return signal?.reason instanceof Error
       ? signal.reason
       : Object.assign(new Error(reasonCode === "TIMEOUT" ? "Stage timed out" : "Job was cancelled"), { code: reasonCode });
-  }
-  if (isAbortError(error)) {
-    return error;
   }
 
   const descriptor = BACKENDS[backend];
