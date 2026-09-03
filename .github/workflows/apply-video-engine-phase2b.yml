@@ -1,0 +1,33 @@
+name: Apply Video Engine Phase 2b
+
+on:
+  push:
+    branches:
+      - feat/viral-video-engine-modal-phase2-3
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: "!contains(github.event.head_commit.message, '[phase2b-migrated]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/viral-video-engine-modal-phase2-3
+          fetch-depth: 0
+      - name: Apply migration
+        run: python3 scripts/apply-video-engine-phase2b.py
+      - name: Cleanup migration files
+        run: |
+          rm -f scripts/apply-video-engine-phase2b.py
+          rm -f .github/workflows/apply-video-engine-phase2b.yml
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(video): wire word-level caption alignment [phase2b-migrated]"
+          git push origin HEAD:feat/viral-video-engine-modal-phase2-3
