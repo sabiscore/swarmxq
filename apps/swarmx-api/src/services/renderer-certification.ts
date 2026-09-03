@@ -19,6 +19,8 @@ const CERTIFICATION_CEILING: Record<RendererCapabilityTier, CertificationTier> =
   ffmpeg_kinetic_text: "PUBLISHED_VERIFIED",
   ffmpeg_faceless_broll: "PUBLISHED_VERIFIED",
   ffmpeg_cinematic_explainer: "PUBLISHED_VERIFIED",
+  modal_wan22_l4: "READY_TO_POST",
+  modal_ltx_video: "READY_TO_POST",
   optional_adapter: "PRODUCTION_PACK_VALID",
 };
 
