@@ -59,7 +59,6 @@ export async function masterAudio(req: AudioMasteringRequest): Promise<AudioMast
   const sampleRate = req.sampleRate ?? 48000;
   const channels = req.channels ?? 2;
   const bitrate = req.bitrate ?? 192;
-
   const loudnormBase = `loudnorm=I=${profile.targetLUFS}:TP=${profile.truePeakCeiling}:LRA=11`;
 
   const pass1Args = ["-i", req.inputPath, "-af", `${loudnormBase}:print_format=json`, "-f", "null", "/dev/null"];
@@ -84,7 +83,7 @@ export async function masterAudio(req: AudioMasteringRequest): Promise<AudioMast
     "-ar", String(sampleRate),
     "-ac", String(channels),
     "-c:a", "aac",
-    "-b:a", `${bitrate}k",
+    "-b:a", `${bitrate}k`,
     "-y", req.outputPath,
   ];
   const pass2 = spawnSync("ffmpeg", pass2Args, { encoding: "utf8" });
