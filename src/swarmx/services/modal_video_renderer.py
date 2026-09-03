@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import os
 from pathlib import Path
@@ -13,10 +12,12 @@ from fastapi.responses import FileResponse
 APP_NAME = os.getenv("SWARMX_MODAL_APP", "swarmxq-video-renderer")
 VOLUME_NAME = os.getenv("SWARMX_MODAL_VOLUME", "swarmxq-video-artifacts")
 MODEL_ID = os.getenv("SWARMX_VIDEO_MODEL_ID", "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
+SECRET_NAME = os.getenv("SWARMX_MODAL_SECRET_NAME", "swarmxq-video-renderer")
 OUTPUT_ROOT = Path("/outputs")
 
 app = modal.App(APP_NAME)
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
+modal_secret = modal.Secret.from_name(SECRET_NAME)
 
 render_image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -35,7 +36,7 @@ render_image = (
 
 def _output_path(job_id: str, segment_id: str) -> Path:
     safe_job = "".join(c for c in job_id if c.isalnum() or c in "-_")
-    safe_segment = "".join(c for c in segment_id if c.isalnum() or c in "-_" )
+    safe_segment = "".join(c for c in segment_id if c.isalnum() or c in "-_")
     path = OUTPUT_ROOT / safe_job / f"{safe_segment}.mp4"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
@@ -45,6 +46,7 @@ def _output_path(job_id: str, segment_id: str) -> Path:
     image=render_image,
     gpu="L4",
     volumes={"/outputs": volume},
+    secrets=[modal_secret],
     min_containers=0,
     max_containers=4,
     timeout=600,
@@ -57,7 +59,7 @@ def render_one(task: dict[str, Any]) -> dict[str, Any]:
     from diffusers.utils import export_to_video
 
     device = "cuda"
-    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    dtype = torch.bfloat16
     pipe = WanPipeline.from_pretrained(MODEL_ID, torch_dtype=dtype)
     pipe.to(device)
 
@@ -91,6 +93,7 @@ def render_one(task: dict[str, Any]) -> dict[str, Any]:
 @app.function(
     image=render_image,
     volumes={"/outputs": volume},
+    secrets=[modal_secret],
     min_containers=0,
     max_containers=1,
     timeout=900,
@@ -106,7 +109,7 @@ web = FastAPI(title="SwarmXQ Modal Video Renderer")
 
 
 def _check_auth(authorization: str | None) -> None:
-    expected = os.getenv("SWARMX_MODAL_RENDER_TOKEN")
+    expected = os.getenv("SWARMX_MODAL_RENDER_TOKEN", "").strip()
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="invalid renderer token")
 
@@ -130,7 +133,7 @@ async def submit(payload: dict[str, Any], authorization: str | None = Header(def
     tasks = payload.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise HTTPException(status_code=422, detail="tasks must be a non-empty list")
-    if len(tasks) > 32:
+    if len(tasks) > 8:
         raise HTTPException(status_code=422, detail="too many segment tasks")
     call = render_segments.spawn(tasks)
     return {"call_id": call.object_id}
@@ -145,22 +148,10 @@ async def file(job_id: str, segment_id: str, authorization: str | None = Header(
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
-@web.get("/v1/render/{call_id}")
-async def result(call_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    _check_auth(authorization)
-    function_call = modal.FunctionCall.from_id(call_id)
-    try:
-        value = function_call.get(timeout=0)
-    except TimeoutError:
-        return {"status": "pending"}
-    except Exception as exc:
-        return {"status": "failed", "error": str(exc)}
-    return {"status": "completed", "artifacts": value}
-
-
 @app.function(
     image=render_image,
     volumes={"/outputs": volume},
+    secrets=[modal_secret],
     min_containers=0,
     max_containers=1,
     timeout=120,
