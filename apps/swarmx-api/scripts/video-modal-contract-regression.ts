@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const root = new URL("../../../", import.meta.url);
 const backendSource = await readFile(new URL("../src/services/modal-video-render-backend.ts", import.meta.url), "utf8");
 const contract = JSON.parse(await readFile(new URL("../../../contracts/video-segment-render-task.schema.json", import.meta.url), "utf8")) as {
   required?: string[];
-  properties?: Record<string, unknown>;
 };
 const pythonSource = await readFile(new URL("../../../src/swarmx/services/video_segment_contract.py", import.meta.url), "utf8");
 const modalSource = await readFile(new URL("../../../src/swarmx/services/modal_video_renderer.py", import.meta.url), "utf8");
 
-void root;
-
-assert.ok(backendSource.includes("Function-compatible remote render contract" ) || backendSource.includes("ModalVideoRenderBackend"));
+assert.ok(backendSource.includes("class ModalVideoRenderBackend") || backendSource.includes("ModalVideoRenderBackend"));
 assert.ok(backendSource.includes("SWARMX_MODAL_RENDER_URL"));
 assert.ok(backendSource.includes("/v1/render"));
 assert.ok(backendSource.includes("maxConcurrentSegments: 4"));
