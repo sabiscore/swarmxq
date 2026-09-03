@@ -42,6 +42,7 @@ tts       = [
 video = [
   "faster-whisper>=1.1.0",
   "modal>=1.5.0",
+  "pydantic>=2.9.0",
 ]
 all = [
   "openai-agents>=0.0.9",

@@ -99,7 +99,7 @@ export class ModalVideoRenderBackend implements RenderBackend {
     // The shared type currently has an intentionally broad adapter tier;
     // the concrete provider id below prevents certification from being
     // inferred from an arbitrary plugin name.
-    tier: "optional_adapter",
+    tier: "modal_wan22_l4",
     remote: true,
     supportsSegmentFanout: true,
     maxConcurrentSegments: 4,

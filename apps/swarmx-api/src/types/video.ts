@@ -159,6 +159,10 @@ export interface VideoOutputMetadata {
   rightsManifestPath?: string;
   platformPackagePath?: string;
   thumbnailPath?: string;
+  alignedAssPath?: string;
+  alignedSrtPath?: string;
+  alignedVttPath?: string;
+  wordTimingPath?: string;
 }
 
 // ─── Full Job Record ──────────────────────────────────────────────────────────

@@ -939,7 +939,7 @@ async function stageRenderAssembly(
     const _renv = loadEnv();
     const backend = _renv.SWARMX_VIDEO_RENDER_BACKEND;
 
-    const modalConfigured = Boolean(process.env["SWARMX_MODAL_RENDER_URL"]?.trim());
+    const modalConfigured = Boolean(_renv.SWARMX_MODAL_RENDER_URL?.trim());
     if ((backend === "auto" || backend === "modal") && modalConfigured) {
       const modal = new ModalVideoRenderBackend();
       if (!(await modal.isAvailable(controller.signal))) {

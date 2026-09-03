@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -35,7 +36,9 @@ def align_audio(audio_path: str, language: str = "en", model_size: str = "small"
             "faster-whisper is required for production subtitle alignment; install the video optional dependency"
         ) from exc
 
-    model = WhisperModel(model_size, device="cuda", compute_type="float16")
+    device = os.getenv("SWARMX_WHISPER_DEVICE", "cpu")
+    compute_type = os.getenv("SWARMX_WHISPER_COMPUTE_TYPE", "int8" if device == "cpu" else "float16")
+    model = WhisperModel(model_size, device=device, compute_type=compute_type)
     segments, _info = model.transcribe(audio_path, language=language, word_timestamps=True, vad_filter=True)
     words: list[WordTiming] = []
     for segment in segments:
@@ -119,6 +122,7 @@ def main() -> None:
     parser.add_argument("srt")
     parser.add_argument("vtt")
     parser.add_argument("json")
+    parser.add_argument("--language", default="en")
     args = parser.parse_args()
     write_alignment(args.audio, args.ass, args.srt, args.vtt, args.json)
 

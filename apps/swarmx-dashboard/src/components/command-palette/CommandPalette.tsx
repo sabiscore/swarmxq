@@ -12,6 +12,7 @@ import type { AgentState } from "@swarmx/types";
 const NAVIGATION_COMMANDS = [
   { id: "nav-overview",   label: "Go to Overview",     shortcut: "⌘1", href: "/",          keywords: "home dashboard" },
   { id: "nav-composer",   label: "Go to Composer",     shortcut: "⌘2", href: "/composer",  keywords: "create build prompt project" },
+  { id: "nav-video-studio", label: "Open Video Studio", shortcut: "⌘V", href: "/video/studio", keywords: "viral video reels tiktok shorts create" },
   { id: "nav-agents",     label: "Go to Agent Fleet",  shortcut: "⌘3", href: "/agents",    keywords: "bots workers" },
   { id: "nav-workflows",  label: "Go to Workflows",    shortcut: "⌘4", href: "/workflows", keywords: "dag yaml" },
   { id: "nav-logs",       label: "Go to Logs",         shortcut: "⌘5", href: "/logs",      keywords: "journald syslog events" },

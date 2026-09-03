@@ -159,6 +159,8 @@ const schema = z.object({
   SWARMX_VIDEO_ALLOW_UNSTRUCTURED_INTENT: boolFlag,
   SWARMX_VIDEO_RENDER_BACKEND: z.string().default("auto"),
   SWARMX_MODAL_RENDER_URL: z.string().url().optional(),
+  SWARMX_MODAL_RENDER_TOKEN: z.string().optional(),
+  SWARMX_MODAL_SECRET_NAME: z.string().min(1).default("swarmxq-video-renderer"),
   SWARMX_MODAL_MAX_CONTAINERS: positiveInt.default(4),
   SWARMX_MODAL_FUNCTION_TIMEOUT_S: positiveInt.default(600),
   SWARMX_MODAL_STARTUP_TIMEOUT_S: positiveInt.default(180),
