@@ -17,6 +17,7 @@ import { loadEnv } from "../lib/env.js";
 import { clampCertificationTier } from "./renderer-certification.js";
 import { KokoroVoiceProvider, normalizeScriptForSpeech, selectVoiceProvider, type SectionVoiceSynthesisSegment } from "./voice-providers.js";
 import { runTemplateQc } from "./template-aware-qc.js";
+import { alignNarrationAudio, type CaptionAlignmentArtifacts } from "./video-caption-alignment-client.js";
 
 const _ffenv = loadEnv();
 const RENDER_COMMAND_TIMEOUT_MS = Math.min(
@@ -43,6 +44,7 @@ interface FfmpegRenderInput {
   request: VideoJobRequest;
   scriptText?: string;
   storyboardFrames: string[];
+  backgroundVideoPaths?: string[];
   signal?: AbortSignal;
 }
 
@@ -62,6 +64,7 @@ export interface FfmpegRenderPackage {
   templateLineagePath: string;
   mediaQualityReport: MediaQualityReport;
   voiceArtifact?: VoiceArtifact;
+  alignment?: CaptionAlignmentArtifacts;
 }
 
 // ── Visual Palette ─────────────────────────────────────────────────────────────
@@ -1042,29 +1045,61 @@ export async function renderWithFfmpeg(input: FfmpegRenderInput): Promise<{ outp
       }
     }
 
-    const renderTimings = computeCardTimings(cards, duration);
-    const filterComplex = buildFilterComplex(
-      fontFile,
-      textFiles,
-      displayCards,
-      duration,
-      accentColor,
-      styleConfig,
-      rendererTier,
-      input.request,
-      renderTimings,
-    );
+    const requireWordAlignment = loadEnv().SWARMX_VIDEO_REQUIRE_WORD_ALIGNMENT === "1" && input.request.style === "kinetic_text";
+    let alignment: CaptionAlignmentArtifacts | undefined;
+    if (requireWordAlignment && voiceArtifact) {
+      try {
+        alignment = await alignNarrationAudio(
+          input.jobId,
+          narrationPath,
+          loadEnv().SWARMX_TTS_LOCALE.split("-")[0] ?? "en",
+          input.signal,
+        );
+      } catch (error) {
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+          code: "WORD_ALIGNMENT_FAILED",
+        });
+      }
+    }
 
+    const renderTimings = computeCardTimings(cards, duration);
+    const filterComplex = alignment
+      ? "format=yuv420p"
+      : buildFilterComplex(
+        fontFile,
+        textFiles,
+        displayCards,
+        duration,
+        accentColor,
+        styleConfig,
+        rendererTier,
+        input.request,
+        renderTimings,
+      );
+
+      const remoteSegments = input.backgroundVideoPaths ?? [];
+    const segmentListPath = join(workDir, "remote-segments.txt");
+    if (remoteSegments.length > 0) {
+      await writeFile(
+        segmentListPath,
+        remoteSegments.map((path) => `file '${path.replace(/\\/g, "/").replace(/'/g, "\\'")}'`).join("\n") + "\n",
+        "utf8",
+      );
+    }
+
+    const visualInputArgs = remoteSegments.length > 0
+      ? ["-f", "concat", "-safe", "0", "-i", segmentListPath]
+      : ["-f", "lavfi", "-i", `color=c=${bgColor}:s=720x1280:r=30:d=${duration}`];
     const inputArgs = voiceArtifact
       ? ["-i", narrationPath]
       : ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
 
     await execFileChecked("ffmpeg", [
       "-y",
-      "-f", "lavfi",
-      "-i", `color=c=${bgColor}:s=720x1280:r=30:d=${duration}`,
+      ...visualInputArgs,
       ...inputArgs,
       "-filter_complex", `[0:v]${filterComplex}[v]`,
+      ...(alignment ? ["-vf", `subtitles=${alignment.assPath.replaceAll("\\", "/").replaceAll(":", "\\:")}`] : []),
       "-map", "[v]",
       "-map", "1:a",
       "-shortest",
@@ -1096,6 +1131,7 @@ export async function renderWithFfmpeg(input: FfmpegRenderInput): Promise<{ outp
       narration,
       duration,
       ...(voiceArtifact ? { voiceArtifact } : {}),
+      ...(alignment ? { alignment } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
 

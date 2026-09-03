@@ -96,6 +96,8 @@ export type RendererCapabilityTier =
   | "ffmpeg_kinetic_text"
   | "ffmpeg_faceless_broll"
   | "ffmpeg_cinematic_explainer"
+  | "modal_wan22_l4"
+  | "modal_ltx_video"
   | "optional_adapter";
 
 export type EpisodeLifecycleState =

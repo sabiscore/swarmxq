@@ -118,7 +118,15 @@ const TIER_RULES: Record<RendererCapabilityTier, Partial<Record<FindingType, Tie
     // Optional adapters (ComfyUI etc.) get no template-specific rules.
     // All findings pass through at raw severity.
   },
+  modal_wan22_l4: {},
+  modal_ltx_video: {},
 };
+
+// Remote generated segments are treated conservatively: raw findings pass
+// through unless a renderer-specific rule is added later. This keeps the
+// certification gate fail-closed for unexpected high-severity defects.
+Object.assign(TIER_RULES.modal_wan22_l4!, TIER_RULES.ffmpeg_faceless_broll);
+Object.assign(TIER_RULES.modal_ltx_video!, TIER_RULES.ffmpeg_faceless_broll);
 
 export function interpretFinding(
   finding: RawQcFinding,

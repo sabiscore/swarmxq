@@ -159,6 +159,10 @@ export interface VideoOutputMetadata {
   rightsManifestPath?: string;
   platformPackagePath?: string;
   thumbnailPath?: string;
+  alignedAssPath?: string;
+  alignedSrtPath?: string;
+  alignedVttPath?: string;
+  wordTimingPath?: string;
 }
 
 // ─── Full Job Record ──────────────────────────────────────────────────────────
@@ -235,6 +239,10 @@ export type VideoErrorCode =
   | "STORYBOARD_FAILED"
   | "RENDER_FAILED"
   | "RENDER_BACKEND_INVALID"
+  | "MODAL_RENDER_REQUEST_FAILED"
+  | "MODAL_RENDER_UNAVAILABLE"
+  | "WORD_ALIGNMENT_UNAVAILABLE"
+  | "WORD_ALIGNMENT_FAILED"
   | "ASSET_WRITE_FAILED"
   | "ARTIFACT_PATH_TRAVERSAL"
   | "ARTIFACT_MISSING"

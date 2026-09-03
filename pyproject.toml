@@ -10,10 +10,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "SwarmX Contributors", email = "swarmx@example.com"}]
 
-# ── Core runtime dependencies ──────────────────────────────────────────────────
-# All versions pinned with compatible-release (~=) or minimum-bound (>=) anchors.
-# Never use bare package names — any pip install will silently pull breaking changes.
-# Upgrade intentionally: bump version, run `make test`, then commit.
 dependencies = [
   "PyYAML>=6.0.2",
   "rich>=13.7.1",
@@ -22,19 +18,11 @@ dependencies = [
   "tqdm>=4.66.0",
   "pyfiglet>=1.0.2",
   "questionary>=2.0.1",
-  # Structured JSON logging — used throughout orchestration/ and src/swarmx/
   "structlog>=24.1.0",
-  # HTTP client — required by orchestration/orchestrator.py (OllamaClient),
-  # src/swarmx/server.py (health probes), cli/commands/doctor.py,
-  # and brain/router.py. NOT optional — every execution path needs it.
   "httpx>=0.27.0",
-  # Async file I/O — required by orchestration/orchestrator.py TaskTrace.save()
-  # and health log async writes. Promoted from orchestration/requirements.txt.
   "aiofiles>=24.1.0",
 ]
 
-
-# ── Optional framework adapters ────────────────────────────────────────────────
 [project.optional-dependencies]
 openai    = ["openai-agents>=0.0.9"]
 langgraph = ["langgraph>=0.2.0"]
@@ -43,7 +31,6 @@ autogen   = ["autogen-agentchat>=0.4.0"]
 adk       = ["google-adk>=0.3.0"]
 strands   = ["strands-agents>=0.1.0"]
 mcp       = ["mcp>=1.0.0"]
-# httpx is used by health-check helpers and the doctor command
 http      = ["httpx>=0.27.0"]
 tts       = [
   "fastapi>=0.115.0",
@@ -52,8 +39,11 @@ tts       = [
   "numpy>=1.26.0",
   "kokoro>=0.9.0",
 ]
-
-# all: every optional adapter — used by the Docker image build
+video = [
+  "faster-whisper>=1.1.0",
+  "modal>=1.5.0",
+  "pydantic>=2.9.0",
+]
 all = [
   "openai-agents>=0.0.9",
   "langgraph>=0.2.0",
@@ -65,7 +55,6 @@ all = [
   "httpx>=0.27.0",
 ]
 
-# dev: testing and linting — never included in the Docker image
 dev = [
   "pytest>=8.2.0",
   "pytest-asyncio>=0.24.0",
@@ -78,17 +67,14 @@ dev = [
 swarm  = "swarmx.cli:main"
 swarmx = "swarmx.cli:main"
 
-# ── Pytest ─────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths        = ["tests"]
 pythonpath       = [".", "src"]
 addopts          = "-q --tb=short"
 python_files     = "test_*.py"
 python_functions = "test_*"
-# Prevent slow tests from hanging CI — individual tests override via @pytest.mark.timeout
 timeout = 120
 
-# ── Setuptools ─────────────────────────────────────────────────────────────────
 [tool.setuptools]
 include-package-data = true
 package-dir = {"" = "src"}
@@ -96,7 +82,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# ── Ruff (linter + formatter) ──────────────────────────────────────────────────
 [tool.ruff]
 line-length    = 120
 target-version = "py311"
@@ -104,29 +89,25 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = [
-  "E501",   # line length — handled by formatter
-  "E402",   # test modules adjust sys.path before imports
-  "E701",   # legacy health-check output keeps compact conditional append blocks
-  "B008",   # function calls in default args (used deliberately in dataclasses)
-  "B904",   # legacy CLI shims intentionally translate exceptions to exits
-  "B007",   # legacy validation loops sometimes keep names for readability
-  "E741",   # legacy numeric code uses short mathematical loop names
-  "SIM102", # avoid unrelated legacy control-flow churn
-  "SIM105", # avoid broad contextlib churn in best-effort cleanup/log paths
-  "SIM108", # avoid unrelated ternary rewrites in readability-sensitive code
-  "SIM110", # avoid unrelated legacy helper rewrites
-  "UP006",  # use `type` instead of `Type` — keep 3.11 compat annotations
-  "UP007",  # use `X | Y` — keep explicit Optional for clarity in public API
-  "UP042",  # keep explicit str, Enum inheritance for 3.11 compatibility
+  "E501",
+  "E402",
+  "E701",
+  "B008",
+  "B904",
+  "B007",
+  "E741",
+  "SIM102",
+  "SIM105",
+  "SIM108",
+  "SIM110",
+  "UP006",
+  "UP007",
+  "UP042",
 ]
 
-# ── Mypy ──────────────────────────────────────────────────────────────────────
 [tool.mypy]
 python_version       = "3.11"
 warn_return_any      = true
-# Optional runtime adapters retain import guards that are only required on
-# minimal dependency installations; Python 3.12+ can resolve some guards and
-# make their compatibility comments appear unused during static analysis.
 warn_unused_ignores  = false
 ignore_missing_imports = true
 no_site_packages = true
