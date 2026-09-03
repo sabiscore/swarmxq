@@ -59,8 +59,7 @@ def render_one(task: dict[str, Any]) -> dict[str, Any]:
     from diffusers.utils import export_to_video
 
     device = "cuda"
-    dtype = torch.bfloat16
-    pipe = WanPipeline.from_pretrained(MODEL_ID, torch_dtype=dtype)
+    pipe = WanPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
     pipe.to(device)
 
     frames = max(8, int(round(float(task["durationSeconds"]) * int(task["fps"]))))
@@ -101,7 +100,6 @@ def render_one(task: dict[str, Any]) -> dict[str, Any]:
     retries=modal.Retries(max_retries=1, initial_delay=2.0, backoff_coefficient=2.0),
 )
 def render_segments(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Native Modal fan-out. Do not replace this with sequential .remote() calls.
     return list(render_one.map(tasks))
 
 
@@ -117,14 +115,7 @@ def _check_auth(authorization: str | None) -> None:
 @web.get("/health")
 async def health(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     _check_auth(authorization)
-    return {
-        "ok": True,
-        "app": APP_NAME,
-        "model": MODEL_ID,
-        "gpu": "L4",
-        "min_containers": 0,
-        "max_containers": 4,
-    }
+    return {"ok": True, "app": APP_NAME, "model": MODEL_ID, "gpu": "L4", "min_containers": 0, "max_containers": 4}
 
 
 @web.post("/v1/render")
@@ -146,6 +137,19 @@ async def file(job_id: str, segment_id: str, authorization: str | None = Header(
     if not path.exists():
         raise HTTPException(status_code=404, detail="segment artifact not found")
     return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+@web.get("/v1/render/{call_id}")
+async def result(call_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _check_auth(authorization)
+    function_call = modal.FunctionCall.from_id(call_id)
+    try:
+        value = function_call.get(timeout=0)
+    except TimeoutError:
+        return {"status": "pending"}
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc)}
+    return {"status": "completed", "artifacts": value}
 
 
 @app.function(
