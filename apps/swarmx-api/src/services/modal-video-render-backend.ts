@@ -1,7 +1,7 @@
 import type { VideoJobRequest } from "../types/video.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loadEnv, readRawEnv } from "../lib/env.js";
+import { loadEnv, readSecretEnv } from "../lib/env.js";
 import type {
   RenderBackend,
   RenderBackendCapabilities,
@@ -20,13 +20,13 @@ interface ModalResultResponse {
 }
 
 function modalUrl(): string {
-  const value = readRawEnv("SWARMX_MODAL_RENDER_URL")?.trim();
-  if (!value) throw new Error("SWARMX_MODAL_RENDER_URL is not configured");
+  const value = loadEnv().SWARMX_MODAL_RENDER_URL?.trim();
+  if (!value) throw Object.assign(new Error("SWARMX_MODAL_RENDER_URL is not configured"), { code: "MODAL_RENDER_UNAVAILABLE" });
   return value.replace(/\/+$/, "");
 }
 
 function modalToken(): string | undefined {
-  const token = readRawEnv("SWARMX_MODAL_RENDER_TOKEN")?.trim();
+  const token = readSecretEnv("SWARMX_MODAL_RENDER_TOKEN");
   return token || undefined;
 }
 
@@ -40,7 +40,9 @@ async function requestBytes(url: string, init: RequestInit, signal?: AbortSignal
     const token = modalToken();
     if (token) headers.set("authorization", `Bearer ${token}`);
     const response = await fetch(url, { ...init, headers, signal: controller.signal });
-    if (!response.ok) throw new Error(`Modal file fetch failed: ${response.status}`);
+    if (!response.ok) {
+      throw Object.assign(new Error(`Modal file fetch failed: ${response.status}`), { code: "MODAL_RENDER_REQUEST_FAILED" });
+    }
     return new Uint8Array(await response.arrayBuffer());
   } finally {
     clearTimeout(timeout);
@@ -83,22 +85,33 @@ async function requestJson<T>(url: string, init: RequestInit, signal?: AbortSign
 }
 
 function buildTasks(request: VideoJobRequest, tasks: RenderSegmentTask[]): RenderSegmentTask[] {
+  void request;
   return tasks.map((task) => ({
     ...task,
-    jobId: task.jobId,
     durationSeconds: Math.max(1, Math.min(12, task.durationSeconds)),
     fps: Math.max(8, Math.min(30, task.fps)),
     width: Math.max(256, Math.min(1920, task.width)),
     height: Math.max(256, Math.min(1920, task.height)),
-    ...(request.platform ? {} : {}),
   }));
+}
+
+function validateArtifacts(tasks: RenderSegmentTask[], artifacts: RenderSegmentArtifact[]): RenderSegmentArtifact[] {
+  if (artifacts.length !== tasks.length) {
+    throw Object.assign(new Error(`Modal returned ${artifacts.length} artifacts for ${tasks.length} tasks`), { code: "RENDER_FAILED" });
+  }
+  const expected = new Set(tasks.map((task) => task.segmentId));
+  const seen = new Set<string>();
+  for (const artifact of artifacts) {
+    if (!expected.has(artifact.segmentId) || seen.has(artifact.segmentId)) {
+      throw Object.assign(new Error(`Modal returned an invalid or duplicate segment: ${artifact.segmentId}`), { code: "RENDER_FAILED" });
+    }
+    seen.add(artifact.segmentId);
+  }
+  return tasks.map((task) => artifacts.find((artifact) => artifact.segmentId === task.segmentId)!);
 }
 
 export class ModalVideoRenderBackend implements RenderBackend {
   readonly capabilities: RenderBackendCapabilities = {
-    // The shared type currently has an intentionally broad adapter tier;
-    // the concrete provider id below prevents certification from being
-    // inferred from an arbitrary plugin name.
     tier: "modal_wan22_l4",
     remote: true,
     supportsSegmentFanout: true,
@@ -108,78 +121,62 @@ export class ModalVideoRenderBackend implements RenderBackend {
 
   async isAvailable(signal?: AbortSignal): Promise<boolean> {
     try {
-      await requestJson<{ ok?: boolean }>(`${modalUrl()}/health`, { method: "GET" }, signal);
-      return true;
+      const response = await requestJson<{ ok?: boolean }>(`${modalUrl()}/health`, { method: "GET" }, signal);
+      return response.ok !== false;
     } catch {
       return false;
     }
   }
 
-  async renderSegments(
-    request: VideoJobRequest,
-    tasks: RenderSegmentTask[],
-    signal?: AbortSignal,
-  ): Promise<RenderSegmentArtifact[]> {
+  async renderSegments(request: VideoJobRequest, tasks: RenderSegmentTask[], signal?: AbortSignal): Promise<RenderSegmentArtifact[]> {
+    if (tasks.length === 0) return [];
+    if (tasks.length > this.capabilities.maxConcurrentSegments * 2) {
+      throw Object.assign(new Error(`Modal segment batch exceeds the per-job safety ceiling (${this.capabilities.maxConcurrentSegments * 2})`), { code: "RENDER_BACKEND_INVALID" });
+    }
+
     const payload = await requestJson<ModalSubmitResponse>(
       `${modalUrl()}/v1/render`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          request,
-          tasks: buildTasks(request, tasks),
-        }),
-      },
+      { method: "POST", body: JSON.stringify({ request, tasks: buildTasks(request, tasks) }) },
       signal,
     );
-
-    const callId = payload.call_id;
-    if (!callId) throw new Error("Modal renderer returned no call_id");
+    if (!payload.call_id) throw Object.assign(new Error("Modal renderer returned no call_id"), { code: "MODAL_RENDER_REQUEST_FAILED" });
 
     const deadline = Date.now() + 15 * 60_000;
     let delayMs = 1_000;
     while (Date.now() < deadline) {
       if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
       const result = await requestJson<ModalResultResponse>(
-        `${modalUrl()}/v1/render/${encodeURIComponent(callId)}`,
+        `${modalUrl()}/v1/render/${encodeURIComponent(payload.call_id)}`,
         { method: "GET" },
         signal,
       );
       if (result.status === "completed") {
-        const artifacts = result.artifacts ?? [];
-        const tempRoot = join(loadEnv().SWARMX_VIDEO_TEMP_DIR, "modal", tasks[0]?.jobId ?? "unknown");
+        const artifacts = validateArtifacts(tasks, result.artifacts ?? []);
+        const jobId = tasks[0]!.jobId;
+        const tempRoot = join(loadEnv().SWARMX_VIDEO_TEMP_DIR, "modal", jobId);
         await mkdir(tempRoot, { recursive: true });
         const localArtifacts: RenderSegmentArtifact[] = [];
         for (const artifact of artifacts) {
-          const response = await requestBytes(
-            `${modalUrl()}/v1/render/file/${encodeURIComponent(tasks[0]?.jobId ?? "unknown")}/${encodeURIComponent(artifact.segmentId)}`,
-            { method: "GET" },
-            signal,
+          const bytes = await requestBytes(
+            `${modalUrl()}/v1/render/file/${encodeURIComponent(jobId)}/${encodeURIComponent(artifact.segmentId)}`,
+            { method: "GET" }, signal,
           );
           const localPath = join(tempRoot, `${artifact.segmentId}.mp4`);
-          await writeFile(localPath, response);
+          await writeFile(localPath, bytes);
           localArtifacts.push({ ...artifact, path: localPath });
         }
         return localArtifacts;
       }
       if (result.status === "failed") {
-        throw Object.assign(new Error(result.error ?? "Modal render failed"), {
-          code: "RENDER_FAILED",
-        });
+        throw Object.assign(new Error(result.error ?? "Modal render failed"), { code: "RENDER_FAILED" });
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       delayMs = Math.min(5_000, Math.round(delayMs * 1.5));
     }
-
     throw Object.assign(new Error("Modal render polling timed out"), { code: "TIMEOUT" });
   }
 
-  async cancel(jobId: string): Promise<void> {
-    try {
-      await requestJson(`${modalUrl()}/v1/render/job/${encodeURIComponent(jobId)}`, {
-        method: "DELETE",
-      });
-    } catch {
-      // Best-effort cancellation; the authoritative job remains the API queue.
-    }
+  async cancel(_jobId: string): Promise<void> {
+    // Modal FunctionCall cancellation is provider-specific; the API job remains authoritative.
   }
 }
