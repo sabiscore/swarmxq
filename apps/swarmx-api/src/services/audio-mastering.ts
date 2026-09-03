@@ -62,30 +62,12 @@ export async function masterAudio(req: AudioMasteringRequest): Promise<AudioMast
 
   const loudnormBase = `loudnorm=I=${profile.targetLUFS}:TP=${profile.truePeakCeiling}:LRA=11`;
 
-  const pass1Args = [
-    "-i", req.inputPath,
-    "-af", `${loudnormBase}:print_format=json`,
-    "-f", "null",
-    "/dev/null",
-  ];
-
+  const pass1Args = ["-i", req.inputPath, "-af", `${loudnormBase}:print_format=json`, "-f", "null", "/dev/null"];
   const pass1 = spawnSync("ffmpeg", pass1Args, { encoding: "utf8" });
-
-  if (pass1.error) {
-    throw new AudioMasteringError(
-      `FFmpeg pass 1 failed to start: ${pass1.error.message}`,
-      "AUDIO_MASTERING_PASS1_FAILED",
-    );
-  }
-  if (pass1.status !== 0) {
-    throw new AudioMasteringError(
-      `FFmpeg pass 1 exited with code ${pass1.status ?? "null"}`,
-      "AUDIO_MASTERING_PASS1_FAILED",
-    );
-  }
+  if (pass1.error) throw new AudioMasteringError(`FFmpeg pass 1 failed to start: ${pass1.error.message}`, "AUDIO_MASTERING_PASS1_FAILED");
+  if (pass1.status !== 0) throw new AudioMasteringError(`FFmpeg pass 1 exited with code ${pass1.status ?? "null"}`, "AUDIO_MASTERING_PASS1_FAILED");
 
   const measured = parseLoudnormJson(pass1.stderr);
-
   const normalizedFilter = [
     loudnormBase,
     "linear=true",
@@ -102,122 +84,49 @@ export async function masterAudio(req: AudioMasteringRequest): Promise<AudioMast
     "-ar", String(sampleRate),
     "-ac", String(channels),
     "-c:a", "aac",
-    "-b:a", `${bitrate}k`,
+    "-b:a", `${bitrate}k",
     "-y", req.outputPath,
   ];
-
   const pass2 = spawnSync("ffmpeg", pass2Args, { encoding: "utf8" });
-
-  if (pass2.error) {
-    throw new AudioMasteringError(
-      `FFmpeg pass 2 failed to start: ${pass2.error.message}`,
-      "AUDIO_MASTERING_PASS2_FAILED",
-    );
-  }
-  if (pass2.status !== 0) {
-    throw new AudioMasteringError(
-      `FFmpeg pass 2 exited with code ${pass2.status ?? "null"}`,
-      "AUDIO_MASTERING_PASS2_FAILED",
-    );
-  }
+  if (pass2.error) throw new AudioMasteringError(`FFmpeg pass 2 failed to start: ${pass2.error.message}`, "AUDIO_MASTERING_PASS2_FAILED");
+  if (pass2.status !== 0) throw new AudioMasteringError(`FFmpeg pass 2 exited with code ${pass2.status ?? "null"}`, "AUDIO_MASTERING_PASS2_FAILED");
 
   const measuredInputLUFS = parseFloat(measured.input_i);
   const measuredOutputLUFS = parseFloat(measured.output_i);
   const measuredTruePeak = parseFloat(measured.output_tp);
-
-  log.info({
-    msg: "audio-mastering complete",
-    platform: req.platform,
-    targetLUFS: profile.targetLUFS,
-    measuredInputLUFS,
-    measuredOutputLUFS,
-    measuredTruePeak,
-    sampleRate,
-    channels,
-    bitrate,
-  });
-
-  return {
-    outputPath: req.outputPath,
-    measuredInputLUFS,
-    measuredOutputLUFS,
-    measuredTruePeak,
-    platform: req.platform,
-    ffmpegExitCode: pass2.status ?? 0,
-  };
+  log.info({ msg: "audio-mastering complete", platform: req.platform, targetLUFS: profile.targetLUFS, measuredInputLUFS, measuredOutputLUFS, measuredTruePeak, sampleRate, channels, bitrate });
+  return { outputPath: req.outputPath, measuredInputLUFS, measuredOutputLUFS, measuredTruePeak, platform: req.platform, ffmpegExitCode: pass2.status ?? 0 };
 }
 
-/**
- * Build a tiny deterministic stereo ambience stem without shipping copyrighted assets.
- * The generated stem is intentionally subtle; the speech stem remains dominant.
- */
 export function createAmbientBed(inputDurationSeconds: number, outputPath: string): void {
   const duration = Math.max(1, Math.min(180, Math.ceil(inputDurationSeconds)));
   const args = [
     "-f", "lavfi",
     "-i", `anoisesrc=color=pink:amplitude=0.012:d=${duration}`,
     "-af", "highpass=f=90,lowpass=f=7000,volume=0.24,loudnorm=I=-26:TP=-2:LRA=7",
-    "-ar", "48000",
-    "-ac", "2",
-    "-c:a", "pcm_s16le",
-    "-y", outputPath,
+    "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "-y", outputPath,
   ];
   const result = spawnSync("ffmpeg", args, { encoding: "utf8" });
-  if (result.error || result.status !== 0) {
-    throw new AudioMasteringError(
-      `Ambient bed generation failed: ${result.error?.message ?? `exit ${result.status ?? "null"}`}`,
-      "AUDIO_AMBIENT_BED_FAILED",
-    );
-  }
+  if (result.error || result.status !== 0) throw new AudioMasteringError(`Ambient bed generation failed: ${result.error?.message ?? `exit ${result.status ?? "null"}`}`, "AUDIO_AMBIENT_BED_FAILED");
 }
 
-/**
- * Mix speech over ambience using sidechain ducking. Inputs are pre-normalized stems.
- * The resulting WAV is intentionally lossless so final platform encoding happens once.
- */
-export function mixSpeechWithAmbientBed(
-  speechPath: string,
-  ambientPath: string,
-  outputPath: string,
-): void {
-  const filter = `[1:a]${DUCK_FILTER}[ducked];[0:a][ducked]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,meter=ebu128`;
+export function mixSpeechWithAmbientBed(speechPath: string, ambientPath: string, outputPath: string): void {
+  // Input 0 is speech (sidechain source); input 1 is ambience (compressed target).
+  const filter = `[1:a][0:a]${DUCK_FILTER}[ducked];[0:a][ducked]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0`;
   const args = [
-    "-i", speechPath,
-    "-i", ambientPath,
+    "-i", speechPath, "-i", ambientPath,
     "-filter_complex", filter,
-    "-ar", "48000",
-    "-ac", "2",
-    "-c:a", "pcm_s16le",
-    "-y", outputPath,
+    "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "-y", outputPath,
   ];
   const result = spawnSync("ffmpeg", args, { encoding: "utf8" });
-  if (result.error || result.status !== 0) {
-    throw new AudioMasteringError(
-      `Speech/ambient mix failed: ${result.error?.message ?? `exit ${result.status ?? "null"}`}`,
-      "AUDIO_MIX_FAILED",
-    );
-  }
+  if (result.error || result.status !== 0) throw new AudioMasteringError(`Speech/ambient mix failed: ${result.error?.message ?? `exit ${result.status ?? "null"}`}`, "AUDIO_MIX_FAILED");
 }
 
-/**
- * Explicit speech-first mastering target used by the cinematic short-form path.
- * This preserves platform-level `masterAudio()` behavior while making the
- * requested Phase 2 targets inspectable and deterministic.
- */
 export function masteringTargets(): { speechLUFS: number; ambientLUFS: number; duckFilter: string } {
-  return {
-    speechLUFS: SPEECH_TARGET_LUFS,
-    ambientLUFS: AMBIENT_TARGET_LUFS,
-    duckFilter: DUCK_FILTER,
-  };
+  return { speechLUFS: SPEECH_TARGET_LUFS, ambientLUFS: AMBIENT_TARGET_LUFS, duckFilter: DUCK_FILTER };
 }
 
-export async function masterAudioWithBed(
-  req: AudioMasteringRequest,
-  speechPath: string,
-  ambientPath: string,
-  mixedPath: string,
-): Promise<AudioMasteringResult> {
+export async function masterAudioWithBed(req: AudioMasteringRequest, speechPath: string, ambientPath: string, mixedPath: string): Promise<AudioMasteringResult> {
   mixSpeechWithAmbientBed(speechPath, ambientPath, mixedPath);
   return masterAudio({ ...req, inputPath: mixedPath });
 }
