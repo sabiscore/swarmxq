@@ -37,9 +37,9 @@ export default function VideoStudioPage() {
     if (!ready) return;
     const request: VideoJobRequest = {
       prompt: prompt.trim(),
-      platform,
-      tone,
-      style,
+      platform: platform ?? "tiktok",
+      tone: tone ?? "educational",
+      style: style ?? "faceless_broll",
       targetDurationSeconds: duration,
       captionStyle: "bold_center",
     };
