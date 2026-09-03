@@ -43,6 +43,7 @@ interface FfmpegRenderInput {
   request: VideoJobRequest;
   scriptText?: string;
   storyboardFrames: string[];
+  backgroundVideoPaths?: string[];
   signal?: AbortSignal;
 }
 
@@ -1055,14 +1056,26 @@ export async function renderWithFfmpeg(input: FfmpegRenderInput): Promise<{ outp
       renderTimings,
     );
 
+      const remoteSegments = input.backgroundVideoPaths ?? [];
+    const segmentListPath = join(workDir, "remote-segments.txt");
+    if (remoteSegments.length > 0) {
+      await writeFile(
+        segmentListPath,
+        remoteSegments.map((path) => `file '${path.replace(/\\/g, "/").replace(/'/g, "\\'")}'`).join("\n") + "\n",
+        "utf8",
+      );
+    }
+
+    const visualInputArgs = remoteSegments.length > 0
+      ? ["-f", "concat", "-safe", "0", "-i", segmentListPath]
+      : ["-f", "lavfi", "-i", `color=c=${bgColor}:s=720x1280:r=30:d=${duration}`];
     const inputArgs = voiceArtifact
       ? ["-i", narrationPath]
       : ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
 
     await execFileChecked("ffmpeg", [
       "-y",
-      "-f", "lavfi",
-      "-i", `color=c=${bgColor}:s=720x1280:r=30:d=${duration}`,
+      ...visualInputArgs,
       ...inputArgs,
       "-filter_complex", `[0:v]${filterComplex}[v]`,
       "-map", "[v]",

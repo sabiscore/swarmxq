@@ -103,6 +103,8 @@ import {
 } from "./model-orchestrator.js";
 import { resolveOperatorName } from "@swarmx/types/operator-map";
 import { getComfyUIClient } from "./comfyui-client.js";
+import { ModalVideoRenderBackend } from "./modal-video-render-backend.js";
+import type { RenderSegmentTask } from "./video-render-backend.js";
 import { buildCreativeComfyPrompt, generateLTXWorkflow } from "./video-workflows.js";
 import { scoreVirality } from "./virality-scorer.js";
 import { generateCaptionDraftWithValidation } from "./caption-generator.js";
@@ -936,6 +938,55 @@ async function stageRenderAssembly(
 
     const _renv = loadEnv();
     const backend = _renv.SWARMX_VIDEO_RENDER_BACKEND;
+
+    const modalConfigured = Boolean(process.env["SWARMX_MODAL_RENDER_URL"]?.trim());
+    if ((backend === "auto" || backend === "modal") && modalConfigured) {
+      const modal = new ModalVideoRenderBackend();
+      if (!(await modal.isAvailable(controller.signal))) {
+        if (backend === "modal") {
+          throw Object.assign(new Error("Modal renderer is configured but unavailable"), { code: "MODAL_RENDER_UNAVAILABLE" });
+        }
+      } else {
+        const duration = Math.max(15, Math.min(180, ctx.job.request.targetDurationSeconds ?? 30));
+        const count = Math.max(1, Math.min(8, frames.length));
+        const perSegment = duration / count;
+        const tasks: RenderSegmentTask[] = frames.slice(0, count).map((frame, index) => ({
+          jobId: ctx.job.id,
+          segmentId: `seg-${String(index + 1).padStart(2, "0")}`,
+          prompt: buildCreativeComfyPrompt({ prompt: frame, ...(ctx.job.request.tone ? { tone: ctx.job.request.tone } : {}), ...(ctx.job.request.niche ? { niche: ctx.job.request.niche } : {}), ...(ctx.job.request.style ? { style: ctx.job.request.style } : {}) }),
+          negativePrompt: "low quality, blurry, watermark, distorted, text artifacts",
+          durationSeconds: Math.max(2, Math.min(12, perSegment)),
+          fps: 24,
+          width: ctx.job.request.platform === "generic" ? 1080 : 720,
+          height: ctx.job.request.platform === "generic" ? 1080 : 1280,
+          seed: index + 1 + Math.floor(Date.now() / 1000),
+        }));
+        const artifacts = await modal.renderSegments(ctx.job.request, tasks, controller.signal);
+        const backgroundVideoPaths = artifacts.map((artifact) => artifact.path);
+        const ffmpegResult = await renderWithFfmpeg({
+          jobId: ctx.job.id,
+          request: ctx.job.request,
+          storyboardFrames: frames,
+          backgroundVideoPaths,
+          signal: controller.signal,
+          ...(ctx.scriptText !== undefined ? { scriptText: ctx.scriptText } : {}),
+        });
+        pushOperatorTrace(ctx.job, {
+          stage: toPublicStatus("render_assembly"),
+          operatorTag: "modal:wan2.2:L4",
+          modelTag: "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+          operator: "Remote GPU",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          latencyMs: 0,
+          tokenCount: 0,
+          success: true,
+          timestamp: startedAt,
+        });
+        return ffmpegResult;
+      }
+    }
+
     const comfyClient = getComfyUIClient();
     const comfyAvailable = await comfyClient.isAvailable(controller.signal);
     const comfyConfigured = Boolean(_renv.SWARMX_COMFYUI_OUTPUT_DIR);

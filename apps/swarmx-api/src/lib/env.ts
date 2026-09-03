@@ -158,6 +158,11 @@ const schema = z.object({
   SWARMX_VIDEO_ALLOW_SILENT_AUDIO: boolFlag,
   SWARMX_VIDEO_ALLOW_UNSTRUCTURED_INTENT: boolFlag,
   SWARMX_VIDEO_RENDER_BACKEND: z.string().default("auto"),
+  SWARMX_MODAL_RENDER_URL: z.string().url().optional(),
+  SWARMX_MODAL_MAX_CONTAINERS: positiveInt.default(4),
+  SWARMX_MODAL_FUNCTION_TIMEOUT_S: positiveInt.default(600),
+  SWARMX_MODAL_STARTUP_TIMEOUT_S: positiveInt.default(180),
+  SWARMX_VIDEO_REQUIRE_WORD_ALIGNMENT: boolFlag,
   SWARMX_VIDEO_MAX_BATCH_SIZE: positiveInt.default(8),
   SWARMX_VIDEO_EXPORT_DIR: z.preprocess(
     (val) => val ?? process.env["VIDEO_OUTPUT_DIR"] ?? ".swarmx/video/exports",

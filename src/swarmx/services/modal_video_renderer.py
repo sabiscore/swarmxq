@@ -8,6 +8,7 @@ from typing import Any
 
 import modal
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
 
 APP_NAME = os.getenv("SWARMX_MODAL_APP", "swarmxq-video-renderer")
 VOLUME_NAME = os.getenv("SWARMX_MODAL_VOLUME", "swarmxq-video-artifacts")
@@ -133,6 +134,15 @@ async def submit(payload: dict[str, Any], authorization: str | None = Header(def
         raise HTTPException(status_code=422, detail="too many segment tasks")
     call = render_segments.spawn(tasks)
     return {"call_id": call.object_id}
+
+
+@web.get("/v1/render/file/{job_id}/{segment_id}")
+async def file(job_id: str, segment_id: str, authorization: str | None = Header(default=None)) -> FileResponse:
+    _check_auth(authorization)
+    path = _output_path(job_id, segment_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="segment artifact not found")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
 @web.get("/v1/render/{call_id}")

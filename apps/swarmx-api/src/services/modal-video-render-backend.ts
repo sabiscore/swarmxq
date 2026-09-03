@@ -1,5 +1,7 @@
 import type { VideoJobRequest } from "../types/video.js";
-import { readRawEnv } from "../lib/env.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { loadEnv, readRawEnv } from "../lib/env.js";
 import type {
   RenderBackend,
   RenderBackendCapabilities,
@@ -26,6 +28,24 @@ function modalUrl(): string {
 function modalToken(): string | undefined {
   const token = readRawEnv("SWARMX_MODAL_RENDER_TOKEN")?.trim();
   return token || undefined;
+}
+
+async function requestBytes(url: string, init: RequestInit, signal?: AbortSignal): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const onAbort = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const headers = new Headers(init.headers);
+    const token = modalToken();
+    if (token) headers.set("authorization", `Bearer ${token}`);
+    const response = await fetch(url, { ...init, headers, signal: controller.signal });
+    if (!response.ok) throw new Error(`Modal file fetch failed: ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 async function requestJson<T>(url: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
@@ -124,7 +144,23 @@ export class ModalVideoRenderBackend implements RenderBackend {
         { method: "GET" },
         signal,
       );
-      if (result.status === "completed") return result.artifacts ?? [];
+      if (result.status === "completed") {
+        const artifacts = result.artifacts ?? [];
+        const tempRoot = join(loadEnv().SWARMX_VIDEO_TEMP_DIR, "modal", tasks[0]?.jobId ?? "unknown");
+        await mkdir(tempRoot, { recursive: true });
+        const localArtifacts: RenderSegmentArtifact[] = [];
+        for (const artifact of artifacts) {
+          const response = await requestBytes(
+            `${modalUrl()}/v1/render/file/${encodeURIComponent(tasks[0]?.jobId ?? "unknown")}/${encodeURIComponent(artifact.segmentId)}`,
+            { method: "GET" },
+            signal,
+          );
+          const localPath = join(tempRoot, `${artifact.segmentId}.mp4`);
+          await writeFile(localPath, response);
+          localArtifacts.push({ ...artifact, path: localPath });
+        }
+        return localArtifacts;
+      }
       if (result.status === "failed") {
         throw Object.assign(new Error(result.error ?? "Modal render failed"), {
           code: "RENDER_FAILED",
