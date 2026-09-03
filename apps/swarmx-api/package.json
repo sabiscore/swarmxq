@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:video": "node --import tsx scripts/video-regression-check.ts",
+    "test:video:modal": "node --import tsx scripts/video-modal-contract-regression.ts",
     "test:video:smoke": "node --import tsx scripts/video-render-smoke.ts",
     "test:series": "node --import tsx scripts/series-regression.ts",
     "test:models": "node --import tsx scripts/model-registry-modelfile-check.ts",
