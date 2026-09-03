@@ -1,56 +1,50 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useVideoStore } from "../../../stores/video";
+import type { VideoJobRequest } from "../../../lib/video-dashboard";
 
 const PRESETS = [
-  { id: "fact", label: "Fact Drop", prompt: "Turn one surprising fact into a fast, high-retention short with a strong curiosity gap." },
-  { id: "myth", label: "Myth Bust", prompt: "Bust a common myth with a sharp hook, 3 proof beats, and a memorable conclusion." },
-  { id: "story", label: "Storytime", prompt: "Tell a compact story with a cold open, escalating beats, visual changes, and payoff." },
-  { id: "list", label: "Countdown", prompt: "Create a countdown with escalating value, fast visual beats, and a strong final reveal." },
+  { id: "fact", label: "Fact Drop", prompt: "Turn one surprising fact into a fast, high-retention short with a strong curiosity gap.", style: "faceless_broll", tone: "educational" },
+  { id: "myth", label: "Myth Bust", prompt: "Bust a common myth with a sharp hook, 3 proof beats, and a memorable conclusion.", style: "kinetic_text", tone: "contrarian" },
+  { id: "story", label: "Storytime", prompt: "Tell a compact story with a cold open, escalating beats, visual changes, and payoff.", style: "storytime", tone: "cinematic" },
+  { id: "list", label: "Countdown", prompt: "Create a countdown with escalating value, fast visual beats, and a strong final reveal.", style: "faceless_broll", tone: "urgent" },
 ] as const;
 
 export default function VideoStudioPage() {
+  const router = useRouter();
+  const submitJob = useVideoStore((state) => state.submitJob);
+  const submitError = useVideoStore((state) => state.submitError);
+  const isSubmitting = useVideoStore((state) => state.isSubmitting);
   const [prompt, setPrompt] = useState("");
-  const [tone, setTone] = useState("educational");
-  const [style, setStyle] = useState("faceless_broll");
-  const [platform, setPlatform] = useState("tiktok");
+  const [tone, setTone] = useState<VideoJobRequest["tone"]>("educational");
+  const [style, setStyle] = useState<VideoJobRequest["style"]>("faceless_broll");
+  const [platform, setPlatform] = useState<VideoJobRequest["platform"]>("tiktok");
   const [duration, setDuration] = useState(30);
-  const [loading, setLoading] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
 
-  const ready = useMemo(() => prompt.trim().length >= 8 && !loading, [prompt, loading]);
+  const ready = useMemo(() => prompt.trim().length >= 8 && !isSubmitting, [prompt, isSubmitting]);
 
-  function usePreset(text: string) {
-    setPrompt(text);
-    setMessage("");
+  function usePreset(preset: (typeof PRESETS)[number]) {
+    setPrompt(preset.prompt);
+    setStyle(preset.style);
+    setTone(preset.tone);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!ready) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/video/jobs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: prompt.trim(), platform, tone, style,
-          targetDurationSeconds: duration,
-          captionStyle: "bold_center",
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.message ?? payload?.error?.message ?? `Request failed (${response.status})`);
-      const createdJobId = payload?.jobId ?? payload?.id ?? payload?.job?.id;
-      setJobId(typeof createdJobId === "string" ? createdJobId : null);
-      setMessage(createdJobId ? "Your video is queued. You can open the job now or continue creating another." : "Video job accepted and queued.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not create the video job.");
-    } finally {
-      setLoading(false);
-    }
+    const request: VideoJobRequest = {
+      prompt: prompt.trim(),
+      platform,
+      tone,
+      style,
+      targetDurationSeconds: duration,
+      captionStyle: "bold_center",
+    };
+    const createdJobId = await submitJob(request);
+    if (createdJobId) router.push(`/video/${encodeURIComponent(createdJobId)}`);
   }
 
   return (
@@ -72,7 +66,7 @@ export default function VideoStudioPage() {
 
             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               {PRESETS.map((preset) => (
-                <button type="button" key={preset.id} onClick={() => usePreset(preset.prompt)} className="rounded-xl border border-border bg-bg/70 px-3 py-3 text-left text-xs text-text-secondary transition hover:border-border-active hover:text-text-primary">
+                <button type="button" key={preset.id} onClick={() => usePreset(preset)} className="rounded-xl border border-border bg-bg/70 px-3 py-3 text-left text-xs text-text-secondary transition hover:border-border-active hover:text-text-primary">
                   <span className="block font-medium text-text-primary">{preset.label}</span>
                   <span className="mt-1 block leading-5">{preset.prompt}</span>
                 </button>
@@ -81,35 +75,35 @@ export default function VideoStudioPage() {
 
             <div className="mt-6 grid gap-4 md:grid-cols-3">
               <Field label="Platform">
-                <select value={platform} onChange={(e) => setPlatform(e.target.value)} className="control"><option value="tiktok">TikTok</option><option value="reels">Instagram Reels</option><option value="shorts">YouTube Shorts</option><option value="generic">Generic</option></select>
+                <select value={platform} onChange={(e) => setPlatform(e.target.value as VideoJobRequest["platform"])} className="control"><option value="tiktok">TikTok</option><option value="reels">Instagram Reels</option><option value="shorts">YouTube Shorts</option><option value="generic">Generic</option></select>
               </Field>
               <Field label="Tone">
-                <select value={tone} onChange={(e) => setTone(e.target.value)} className="control"><option>educational</option><option>urgent</option><option>contrarian</option><option>cinematic</option><option>warm</option><option>minimal</option></select>
+                <select value={tone} onChange={(e) => setTone(e.target.value as VideoJobRequest["tone"])} className="control"><option value="educational">Educational</option><option value="urgent">Urgent</option><option value="contrarian">Contrarian</option><option value="cinematic">Cinematic</option><option value="warm">Warm</option><option value="minimal">Minimal</option></select>
               </Field>
               <Field label="Visual style">
-                <select value={style} onChange={(e) => setStyle(e.target.value)} className="control"><option>faceless_broll</option><option>kinetic_text</option><option>storytime</option><option>tutorial</option><option>myth_busting</option></select>
+                <select value={style} onChange={(e) => setStyle(e.target.value as VideoJobRequest["style"])} className="control"><option value="faceless_broll">Faceless b-roll</option><option value="kinetic_text">Kinetic text</option><option value="storytime">Storytime</option><option value="tutorial">Tutorial</option><option value="myth_busting">Myth busting</option></select>
               </Field>
             </div>
 
             <div className="mt-4 flex flex-col gap-3 rounded-xl border border-border bg-bg/50 p-4 md:flex-row md:items-center md:justify-between">
-              <div><p className="text-xs font-medium">Target duration</p><p className="text-[11px] text-text-muted">15–180 seconds. Start short for faster iteration.</p></div>
+              <div><p className="text-xs font-medium">Target duration</p><p className="text-[11px] text-text-muted">15–90 seconds in Studio. The pipeline supports longer jobs through the main form.</p></div>
               <div className="flex items-center gap-3"><input aria-label="Target duration" type="range" min={15} max={90} step={5} value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-40" /><span className="w-12 text-right font-mono text-xs">{duration}s</span></div>
             </div>
 
-            <button disabled={!ready} className="mt-6 w-full rounded-xl bg-accent px-5 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40" type="submit">{loading ? "Queueing video…" : "Create viral video"}</button>
-            {message && <div className="mt-4 rounded-xl border border-border bg-bg/60 p-4 text-sm text-text-secondary" role="status">{message}{jobId && <a className="ml-2 text-accent underline" href={`/video/${encodeURIComponent(jobId)}`}>View job</a>}</div>}
+            <button disabled={!ready} className="mt-6 w-full rounded-xl bg-accent px-5 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40" type="submit">{isSubmitting ? "Queueing video…" : "Create viral video"}</button>
+            {submitError && <div className="mt-4 rounded-xl border border-status-error/35 bg-status-error/10 p-4 text-sm text-status-error" role="alert">{submitError}</div>}
           </form>
 
           <aside className="rounded-2xl border border-border bg-bg-elevated/60 p-5">
-            <p className="text-[11px] font-mono uppercase tracking-[0.18em] text-text-muted">What happens next</p>
+            <p className="text-[11px] font-mono uppercase tracking-[0.18em] text-text-muted">Production flow</p>
             <div className="mt-5 space-y-4">
               {[
-                ["01", "Hook", "Generate a high-curiosity opening and screen competing variants."],
-                ["02", "Story", "Turn the idea into tightly timed beats and a visual shot plan."],
-                ["03", "Voice", "Synthesize the narration with the existing local voice stack."],
-                ["04", "Visuals", "Render shots through the configured local or remote GPU backend."],
-                ["05", "Captions", "Align words to the actual narration and generate styled subtitle tracks."],
-                ["06", "QC", "Run technical, creative and publication gates before export."],
+                ["01", "Hook", "Curiosity, contrast and open-loop mechanics before GPU spend."],
+                ["02", "Story", "Compact beats with a clear escalation and payoff."],
+                ["03", "Voice", "Existing Kokoro/Piper/eSpeak provider routing."],
+                ["04", "Visuals", "Remote L4 generation or certified local render path."],
+                ["05", "Captions", "Audio-derived word timing for production subtitle alignment."],
+                ["06", "QC", "Artifact, media, template and publication gates."],
               ].map(([n, title, body]) => <div key={n} className="flex gap-3"><span className="mt-0.5 font-mono text-xs text-accent">{n}</span><div><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs leading-5 text-text-muted">{body}</p></div></div>)}
             </div>
           </aside>
@@ -120,6 +114,6 @@ export default function VideoStudioPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="block text-xs font-mono text-text-muted">{label}{children}</label>;
 }
