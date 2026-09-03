@@ -3,8 +3,8 @@
 import type { FormEvent, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useVideoStore } from "../../../stores/video";
-import type { VideoJobRequest } from "../../../lib/video-dashboard";
+import { useVideoStore } from "../../../../stores/video";
+import type { VideoJobRequest } from "../../../../lib/video-dashboard";
 
 const PRESETS = [
   { id: "fact", label: "Fact Drop", prompt: "Turn one surprising fact into a fast, high-retention short with a strong curiosity gap.", style: "faceless_broll", tone: "educational" },
@@ -74,15 +74,9 @@ export default function VideoStudioPage() {
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-3">
-              <Field label="Platform">
-                <select value={platform} onChange={(e) => setPlatform(e.target.value as VideoJobRequest["platform"])} className="control"><option value="tiktok">TikTok</option><option value="reels">Instagram Reels</option><option value="shorts">YouTube Shorts</option><option value="generic">Generic</option></select>
-              </Field>
-              <Field label="Tone">
-                <select value={tone} onChange={(e) => setTone(e.target.value as VideoJobRequest["tone"])} className="control"><option value="educational">Educational</option><option value="urgent">Urgent</option><option value="contrarian">Contrarian</option><option value="cinematic">Cinematic</option><option value="warm">Warm</option><option value="minimal">Minimal</option></select>
-              </Field>
-              <Field label="Visual style">
-                <select value={style} onChange={(e) => setStyle(e.target.value as VideoJobRequest["style"])} className="control"><option value="faceless_broll">Faceless b-roll</option><option value="kinetic_text">Kinetic text</option><option value="storytime">Storytime</option><option value="tutorial">Tutorial</option><option value="myth_busting">Myth busting</option></select>
-              </Field>
+              <Field label="Platform"><select value={platform} onChange={(e) => setPlatform(e.target.value as VideoJobRequest["platform"])} className="control"><option value="tiktok">TikTok</option><option value="reels">Instagram Reels</option><option value="shorts">YouTube Shorts</option><option value="generic">Generic</option></select></Field>
+              <Field label="Tone"><select value={tone} onChange={(e) => setTone(e.target.value as VideoJobRequest["tone"])} className="control"><option value="educational">Educational</option><option value="urgent">Urgent</option><option value="contrarian">Contrarian</option><option value="cinematic">Cinematic</option><option value="warm">Warm</option><option value="minimal">Minimal</option></select></Field>
+              <Field label="Visual style"><select value={style} onChange={(e) => setStyle(e.target.value as VideoJobRequest["style"])} className="control"><option value="faceless_broll">Faceless b-roll</option><option value="kinetic_text">Kinetic text</option><option value="storytime">Storytime</option><option value="tutorial">Tutorial</option><option value="myth_busting">Myth busting</option></select></Field>
             </div>
 
             <div className="mt-4 flex flex-col gap-3 rounded-xl border border-border bg-bg/50 p-4 md:flex-row md:items-center md:justify-between">
