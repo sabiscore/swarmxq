@@ -35,8 +35,14 @@ from __future__ import annotations
 import argparse
 import base64
 import io
+import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+_SRC_DIR = str(Path(__file__).resolve().parent.parent.parent)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
 import structlog
 import uvicorn
@@ -279,11 +285,9 @@ def main():
     )
 
     uvicorn.run(
-        "swarmx.services.kokoro_tts_server:app",
+        app,
         host=args.host,
         port=args.port,
-        workers=args.workers,
-        reload=args.reload,
         log_level="info",
     )
 

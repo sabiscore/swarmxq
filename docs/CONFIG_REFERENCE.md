@@ -60,6 +60,9 @@ decisions use physical `MemAvailable` and report ZRAM separately.
 | `SWARMX_VIDEO_ALLOW_SILENT_AUDIO` | unset | Set `1` only for deliberate silent test renders when every configured VoiceProvider is unavailable; production runs fail instead of silently masking narration loss. |
 | `SWARMX_TTS_PROVIDER` | `auto` | Server-side voice provider selection: `auto`, `kokoro`, `piper`, `espeak`, or `silent_fixture`. `silent_fixture` is for explicit tests only. |
 | `SWARMX_TTS_URL` | `http://127.0.0.1:8888` | Kokoro TTS microservice URL. The provider is installed in the app; the host still must have the optional Python `tts` extra installed and the service running. |
+| `SWARMX_START_KOKORO_IF_DOWN` | `1` | Startup automation starts `.venv/bin/python -m swarmx.services.kokoro_tts_server` when the configured TTS health endpoint is unavailable; readiness is bounded and fail-open. |
+| `SWARMX_KOKORO_LOG` | `$SWARM_HOME/logs/kokoro-tts.log` | Kokoro stdout/stderr log path used by startup automation. |
+| `SWARMX_KOKORO_PID_FILE` | `$SWARM_HOME/run/kokoro-tts.pid` | PID file written for the auto-started Kokoro process. |
 | `SWARMX_TTS_PIPER_MODEL_PATH` | unset | Piper voice model path. Piper reports degraded/unavailable when the binary or model path is missing. |
 | `SWARMX_AUDIO_TARGET_LUFS` | `-16` | Local mastering loudness target for rendered short-form narration packages. |
 | `SWARMX_AUDIO_TRUE_PEAK_MAX_DBFS` | `-1.5` | Local mastering true-peak cap. |

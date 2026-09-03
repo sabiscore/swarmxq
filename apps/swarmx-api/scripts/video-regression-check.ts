@@ -39,7 +39,7 @@ process.env["SWARMX_VIDEO_LOW_RAM_MODE"] = "0";
 resetEnvForTesting();
 resetLowRamModeCacheForTesting();
 const defaultProfileRequiredMb = minimumRamRequiredForVideoRequest(request);
-assert.equal(defaultProfileRequiredMb, 6170);
+assert.equal(defaultProfileRequiredMb, 6220);
 
 process.env["SWARMX_VIDEO_LOW_RAM_MODE"] = "1";
 resetEnvForTesting();
@@ -106,6 +106,10 @@ const cappedBody = buildOllamaGenerateBody({
 assert.equal((cappedBody.options as Record<string, unknown>).num_predict, 192);
 
 const orchestratorSource = await readFile(new URL("../src/services/video-orchestrator.ts", import.meta.url), "utf8");
+assert.ok(orchestratorSource.includes('"pov-immersion"'), "planner must support POV immersion template");
+assert.ok(orchestratorSource.includes('"listicle-countdown"'), "planner must support countdown template");
+assert.ok(orchestratorSource.includes('"reddit-story"'), "planner must support Reddit story template");
+assert.ok(orchestratorSource.includes("const selectedTemplate = req.template ?? req.templateFamily"), "explicit template must take precedence over legacy family");
 assert.ok(orchestratorSource.includes("parseIntentClassification"));
 assert.ok(orchestratorSource.includes("buildDeterministicIntentFallback"));
 assert.ok(orchestratorSource.includes("intent classification returned malformed JSON"));
@@ -141,6 +145,9 @@ assert.equal(renderBody.includes("acquireModel("), false);
 assert.equal(renderBody.includes('ctx.modelsUsed["render_assembly"]'), false);
 
 const routesSource = await readFile(new URL("../src/routes/video.ts", import.meta.url), "utf8");
+assert.ok(routesSource.includes('"pov-immersion"'), "video request schema must accept POV immersion template");
+assert.ok(routesSource.includes('"listicle-countdown"'), "video request schema must accept countdown template");
+assert.ok(routesSource.includes('"reddit-story"'), "video request schema must accept Reddit story template");
 assert.ok(routesSource.includes('"/files/:filename"'));
 assert.equal(routesSource.includes('"/api/video/files/:filename"'), false);
 // V6.2.15 — SSE handler must close cleanly on terminal jobs, not hang forever.
@@ -574,6 +581,115 @@ assert.ok(
   serverSource2.includes("stopVideoCleanup()"),
   "server must call stopVideoCleanup() during graceful shutdown",
 );
+
+// ── M2: R1 QA Auditor Gate, R3 SEO & Caption Finalizer, R5 Story Templates ────
+// R1: QA Auditor Gate assertions
+assert.ok(orchestratorSource.includes("stageAuditorReview"), "orchestrator must define stageAuditorReview");
+assert.ok(orchestratorSource.includes('ctx.modelsUsed["auditor_review"] = model'), "auditor_review must record modelsUsed immediately inside stage");
+assert.ok(orchestratorSource.includes("buildAuditorReviewPrompt"), "orchestrator must define buildAuditorReviewPrompt");
+assert.ok(orchestratorSource.includes("forceRewrite"), "auditor review must handle forceRewrite");
+assert.ok(orchestratorSource.includes('runStage(ctx, "auditor_review", 40, 50'), "auditor_review must run between 40 and 50%");
+assert.ok(orchestratorSource.includes('runStage(ctx, "finalizing", 90, 100'), "finalizing must run between 90 and 100%");
+
+// R5: Story Templates Prompt Branching assertions
+assert.ok(orchestratorSource.includes("TEMPLATE_SCRIPTING_RULES"), "video-orchestrator must define TEMPLATE_SCRIPTING_RULES");
+assert.ok(orchestratorSource.includes("TEMPLATE_STORYBOARD_RULES"), "video-orchestrator must define TEMPLATE_STORYBOARD_RULES");
+assert.ok(orchestratorSource.includes("Named Villain"), "myth-vs-fact scripting rule must mention Named Villain");
+assert.ok(orchestratorSource.includes("SECOND-PERSON"), "pov-immersion scripting rule must enforce second-person address");
+assert.ok(orchestratorSource.includes("Number Shock"), "listicle-countdown scripting rule must enforce Number Shock");
+assert.ok(orchestratorSource.includes("Forbidden Knowledge"), "reddit-story scripting rule must enforce Forbidden Knowledge");
+assert.ok(orchestratorSource.includes("split-screen"), "myth-vs-fact storyboard rule must mandate split-screen scenes");
+assert.ok(orchestratorSource.includes("fractal_noise"), "reddit-story storyboard rule must mandate fractal_noise preset");
+
+// R3: SEO & Caption Finalizer assertions
+const captionGen = await import("../src/services/caption-generator.js");
+assert.ok(typeof captionGen.generateFinalizerCaptionDraft === "function", "caption-generator must export generateFinalizerCaptionDraft");
+assert.ok(typeof captionGen.buildDeterministicCaptionDraft === "function", "caption-generator must export buildDeterministicCaptionDraft");
+assert.ok(typeof captionGen.validateCaption === "function", "caption-generator must export validateCaption");
+assert.ok(captionGen.PLATFORM_CHAR_CAPS, "caption-generator must export PLATFORM_CHAR_CAPS");
+assert.equal(captionGen.PLATFORM_CHAR_CAPS.tiktok.hard, 2200);
+assert.equal(captionGen.PLATFORM_CHAR_CAPS.tiktok.soft, 280);
+assert.equal(captionGen.PLATFORM_CHAR_CAPS.reels.hard, 2200);
+assert.equal(captionGen.PLATFORM_CHAR_CAPS.reels.soft, 125);
+assert.equal(captionGen.PLATFORM_CHAR_CAPS.shorts.hard, 5000);
+assert.equal(captionGen.PLATFORM_CHAR_CAPS.shorts.soft, 300);
+
+// Deterministic caption draft tests
+const deterministicDraft = captionGen.buildDeterministicCaptionDraft({
+  topic: "Autonomous AI agents building video pipelines",
+  tone: "educational",
+  platform: "tiktok",
+});
+assert.ok(deterministicDraft.firstLine.length <= 40, "firstLine must be <= 40 chars");
+assert.equal(captionGen.CAPTION_RULES.disallowedOpenerRegex.test(deterministicDraft.firstLine), false, "firstLine must not start with I/My/This/We/Our");
+assert.ok(deterministicDraft.hashtags.niche.length >= 1, "hashtags.niche must not be empty");
+for (const tag of [...deterministicDraft.hashtags.broad, ...deterministicDraft.hashtags.niche, ...deterministicDraft.hashtags.trending]) {
+  assert.equal(captionGen.CAPTION_RULES.forbiddenHashtags.has(tag.toLowerCase()), false, `tag ${tag} must not be forbidden`);
+}
+const deterministicValidation = captionGen.validateCaption(deterministicDraft, "tiktok");
+assert.ok(deterministicValidation.valid, `deterministic draft must be valid: ${deterministicValidation.violations.join(", ")}`);
+
+// Disallowed opener validation test
+const invalidOpenerDraft = {
+  ...deterministicDraft,
+  firstLine: "This is a great tip for your next build",
+};
+const invalidOpenerValidation = captionGen.validateCaption(invalidOpenerDraft, "tiktok");
+assert.equal(invalidOpenerValidation.valid, false, "Draft starting with 'This' must fail validation");
+
+// Too long firstLine test
+const tooLongDraft = {
+  ...deterministicDraft,
+  firstLine: "Here is a first line that exceeds forty characters by quite a bit indeed",
+};
+const tooLongValidation = captionGen.validateCaption(tooLongDraft, "tiktok");
+assert.equal(tooLongValidation.valid, false, "Draft with firstLine > 40 chars must fail validation");
+
+// Forbidden hashtag test
+const forbiddenTagDraft = {
+  ...deterministicDraft,
+  hashtags: {
+    broad: ["#buildinpublic"],
+    niche: ["#fyp"],
+    trending: [],
+  },
+};
+const forbiddenTagValidation = captionGen.validateCaption(forbiddenTagDraft, "tiktok");
+assert.equal(forbiddenTagValidation.valid, false, "Draft with #fyp must fail validation");
+
+// ── M3: R2 FFmpeg Procedural Backgrounds & Kinetic Text Engine ───────────────
+const ffmpegRenderer = await import("../src/services/ffmpeg-video-renderer.js");
+assert.ok(ffmpegRenderer.TONE_PROCEDURAL_PRESETS, "ffmpeg-video-renderer must export TONE_PROCEDURAL_PRESETS");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.cinematic, "gradient_flow");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.warm, "gradient_flow");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.educational, "fractal_noise");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.faceless_broll, "fractal_noise");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.urgent, "plasma_pulse");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.contrarian, "plasma_pulse");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.minimal, "minimal_grid");
+assert.equal(ffmpegRenderer.TONE_PROCEDURAL_PRESETS.kinetic_text, "minimal_grid");
+
+// Procedural background filter checks for each tone
+const tones = ["cinematic", "warm", "educational", "faceless_broll", "urgent", "contrarian", "minimal", "kinetic_text"] as const;
+for (const tone of tones) {
+  const filter = ffmpegRenderer.buildProceduralBackgroundFilter(tone, "0x000000", 30);
+  assert.ok(
+    filter.includes("geq=") || filter.includes("sine("),
+    `procedural background filter for tone ${tone} must include geq= or sine(, got ${filter}`,
+  );
+}
+
+// Kinetic text key phrase detection
+assert.equal(ffmpegRenderer.hasKeyPhraseEmphasis("This is *AMAZING* news"), true, "Asterisks must trigger key phrase emphasis");
+assert.equal(ffmpegRenderer.hasKeyPhraseEmphasis("This is HUGE news"), true, "ALL-CAPS words must trigger key phrase emphasis");
+assert.equal(ffmpegRenderer.hasKeyPhraseEmphasis("normal lower case text"), false, "Regular text must not trigger emphasis");
+
+// Dynamic font discovery check
+const discoveredFont = ffmpegRenderer.discoverFont();
+assert.ok(typeof discoveredFont === "string" && discoveredFont.endsWith(".ttf"), "discoverFont must find a .ttf font");
+
+// Subprocess safety assertion: zero exec( in ffmpeg-video-renderer.ts
+assert.ok(!rendererSource.includes(" exec("), "ffmpeg-video-renderer must use execFile exclusively, never exec(");
 
 console.log("video regression checks passed");
 process.exit(0);

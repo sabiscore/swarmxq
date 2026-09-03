@@ -2,7 +2,7 @@
 
 > **⚠ DEPRECATED — Phase 4 Legacy Dashboard Retirement**
 >
-> This directory (`dashboard-legacy/`) is the legacy static front-end dashboard and will be
+> This archived directory (`docs/archive/dashboard-legacy/`) is the legacy static front-end dashboard and will be
 > **removed in the Phase 4 release**. It is retained for reference and backward-compatibility
 > validation only.
 >

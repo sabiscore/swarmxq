@@ -14,8 +14,14 @@ import type {
   ViralitySignal,
   VoiceArtifact,
   VideoTone,
+  CaptionDraft,
+  VideoTemplate,
 } from "@swarmx/types/video-types";
+import { PLATFORM_CHAR_CAPS } from "@swarmx/types";
 import type { SeriesEpisodeContext } from "@swarmx/types/series-types";
+
+export type { VideoTemplate, CaptionDraft };
+export { PLATFORM_CHAR_CAPS };
 
 export type VideoJobStatus = CanonicalVideoJobStatus | "running" | "completed";
 
@@ -43,6 +49,7 @@ export type VideoJobStage =
   | "intent_classification"
   | "planning"
   | "scripting"
+  | "auditor_review"
   | "storyboard_generation"
   | "render_assembly"
   | "finalizing";
@@ -51,6 +58,7 @@ export const VIDEO_JOB_STAGE_ORDER: VideoJobStage[] = [
   "intent_classification",
   "planning",
   "scripting",
+  "auditor_review",
   "storyboard_generation",
   "render_assembly",
   "finalizing",
@@ -60,6 +68,7 @@ export const VIDEO_JOB_STAGE_LABELS: Record<VideoJobStage, string> = {
   intent_classification: "Intent Classification",
   planning: "Planning",
   scripting: "Scripting",
+  auditor_review: "Auditor Gate",
   storyboard_generation: "Storyboard Generation",
   render_assembly: "Render & Assembly",
   finalizing: "Finalizing",
@@ -70,6 +79,7 @@ export interface VideoJobRequest {
   platform?: VideoExportPlatform | "youtube_shorts";
   niche?: "motivational" | "finance" | "facts" | "true_crime" | "tech" | "other";
   templateFamily?: "myth-vs-fact" | "list/countdown" | "mystery/reveal" | "product-demo" | "quote-to-insight" | "chart/data" | "motivational" | "series-recap";
+  template?: VideoTemplate;
   targetDurationSeconds?: number;
   modelTier?: "fast" | "worker" | "supervisor" | "reasoner";
   audience?: string;
@@ -123,6 +133,8 @@ export interface VideoOutputMetadata {
   vttPath?: string;
   rightsManifestPath?: string;
   platformPackagePath?: string;
+  thumbnailPath?: string;
+  captionDraft?: CaptionDraft;
 }
 
 export interface VideoJobError {
@@ -220,6 +232,8 @@ function normalizeRequest(request: RawVideoJob["request"]): VideoJobRequest {
     prompt: request?.prompt ?? "",
     ...(request?.platform ? { platform: request.platform } : {}),
     ...(request?.niche ? { niche: request.niche } : {}),
+    ...(request?.templateFamily ? { templateFamily: request.templateFamily } : {}),
+    ...(request?.template ? { template: request.template } : {}),
     ...(request?.targetDurationSeconds !== undefined
       ? { targetDurationSeconds: request.targetDurationSeconds }
       : {}),
@@ -313,6 +327,8 @@ function normalizeOutput(
     ...(output.vttPath ? { vttPath: output.vttPath } : {}),
     ...(output.rightsManifestPath ? { rightsManifestPath: output.rightsManifestPath } : {}),
     ...(output.platformPackagePath ? { platformPackagePath: output.platformPackagePath } : {}),
+    ...(output.thumbnailPath ? { thumbnailPath: output.thumbnailPath } : {}),
+    ...(output.captionDraft ? { captionDraft: output.captionDraft } : {}),
   };
 }
 

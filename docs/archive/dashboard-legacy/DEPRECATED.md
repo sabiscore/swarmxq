@@ -1,4 +1,4 @@
-# ⚠ DEPRECATED — dashboard-legacy/
+# DEPRECATED — archived dashboard-legacy/
 
 This directory contains the legacy fallback static dashboard.  
 It is retained for reference only.

@@ -9,6 +9,7 @@ import { useVideoStore } from "../../stores/video";
 import type { VideoJobRequest } from "../../lib/video-dashboard";
 
 type ModelRoute = NonNullable<VideoJobRequest["modelTier"]> | "auto";
+type TemplateRoute = NonNullable<VideoJobRequest["template"]> | "auto";
 
 type SelectOption<T extends string> = {
   value: T;
@@ -130,6 +131,7 @@ export function VideoJobForm({
   const [niche, setNiche] = useState<NonNullable<VideoJobRequest["niche"]>>("motivational");
   const [targetDuration, setTargetDuration] = useState("30");
   const [modelRoute, setModelRoute] = useState<ModelRoute>("auto");
+  const [templateRoute, setTemplateRoute] = useState<TemplateRoute>("auto");
   const [audience, setAudience] = useState("");
   const [tone, setTone] = useState<NonNullable<VideoJobRequest["tone"]>>("educational");
   const [style, setStyle] = useState<NonNullable<VideoJobRequest["style"]>>("faceless_broll");
@@ -156,6 +158,7 @@ export function VideoJobForm({
     setPrompt(draft.prompt);
     setPlatform(draft.platform);
     setNiche(draft.niche);
+    setTemplateRoute(draft.template ?? "auto");
     setTargetDuration(draft.targetDuration);
     setTone(draft.tone);
     setStyle(draft.style);
@@ -185,6 +188,7 @@ export function VideoJobForm({
       voice,
       voiceProfileId,
       storyMode,
+      ...(templateRoute !== "auto" ? { template: templateRoute } : {}),
       ...(audience.trim() ? { audience: audience.trim() } : {}),
       ...(modelTier !== undefined ? { modelTier } : {}),
     };
@@ -391,6 +395,20 @@ export function VideoJobForm({
                 { value: "worker", label: "Worker (7B)" },
                 { value: "supervisor", label: "Supervisor (7B)" },
                 { value: "reasoner", label: "Reasoner (7B)" },
+              ]}
+            />
+            <Select
+              id={`${formId}-template`}
+              label="Story Template"
+              value={templateRoute}
+              onChange={setTemplateRoute}
+              disabled={isSubmitting}
+              options={[
+                { value: "auto", label: "Auto", help: "Uses the prompt and tone without forcing a fixed story grammar." },
+                { value: "myth-vs-fact", label: "Myth vs Fact", help: "Splits a bold belief from the evidence that overturns it." },
+                { value: "pov-immersion", label: "POV Immersion", help: "Frames the story in first person with rapid, lived-in text beats." },
+                { value: "listicle-countdown", label: "Countdown", help: "Builds anticipation through a descending list of concrete reveals." },
+                { value: "reddit-story", label: "Reddit Story", help: "Pairs procedural background motion with a confessional, escalating story." },
               ]}
             />
             <Select

@@ -4,14 +4,14 @@ risk: medium
 
 meta:
   model_triad:
-    router: phi4-fast
-    reasoning: deepseek-reasoner
-    execution: qwen-worker
+    router: route-phi4-lite-q4km-prod
+    reasoning: plan-qwen25-pro-q5km-prod
+    execution: plan-qwen25-pro-q5km-prod
 
 stages:
-  - name: intake
+  - name: intent_classification
     owner: strategist
-    model: phi4-fast
+    model: instruct-phi4-pro-q8-prod
     risk: low
     purpose: Normalize the request, constraints, and target platform.
     outputs:
@@ -21,9 +21,9 @@ stages:
       - length
       - targetPlatform
 
-  - name: plan
+  - name: planning
     owner: video-planner
-    model: deepseek-reasoner
+    model: plan-qwen25-pro-q5km-prod
     risk: medium
     purpose: Decide the narrative structure, scene count, and pacing.
     outputs:
@@ -31,24 +31,24 @@ stages:
       - intent
       - keyPoints
 
-  - name: script
+  - name: scripting
     owner: video-planner
-    model: qwen-worker
+    model: plan-qwen25-pro-q5km-prod
     risk: medium
     purpose: Produce the narration, hook, body, and call-to-action.
     outputs:
       - script
 
-  - name: storyboard
+  - name: storyboard_generation
     owner: video-planner
-    model: qwen-worker
+    model: plan-qwen25-pro-q5km-prod
     risk: medium
     purpose: Convert the script into shots with visual direction.
     outputs:
       - storyboard
       - shotPrompts
 
-  - name: render
+  - name: render_assembly
     owner: renderer
     model: none
     risk: medium
@@ -57,7 +57,7 @@ stages:
       - renderManifest
       - artifactPaths
 
-  - name: export
+  - name: finalizing
     owner: strategist
     model: none
     risk: low
@@ -65,11 +65,3 @@ stages:
     outputs:
       - jobSummary
       - artifactIndex
-
-  - name: learn
-    owner: memory-curator
-    model: none
-    risk: low
-    purpose: Record durable lessons about prompt patterns and degradation behavior.
-    outputs:
-      - memoryEntry

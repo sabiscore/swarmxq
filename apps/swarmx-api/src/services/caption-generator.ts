@@ -1,13 +1,15 @@
 /**
  * apps/swarmx-api/src/services/caption-generator.ts
- * VIDEO-ALPHA caption generation and validation.
+ * VIDEO-ALPHA / M2 dual-model caption and SEO finalizer.
  */
 
 import type {
   CaptionDraft,
   CaptionValidation,
+  HashtagSet,
   VideoExportPlatform,
 } from "@swarmx/types/video-types";
+import { PLATFORM_CHAR_CAPS } from "@swarmx/types/video-types";
 import { resolveCanonicalTag } from "@swarmx/types/operator-map";
 import { ModelOrchestrator } from "./model-orchestrator.js";
 import {
@@ -19,12 +21,13 @@ import {
 import { extractJson, sanitizeReasoningOutput } from "./reasoning-sanitizer.js";
 import { generateOllamaText } from "./ollama.js";
 import { loadEnv } from "../lib/env.js";
+import { log } from "../lib/logger.js";
+import { isLowRamVideoMode, LOW_RAM_VIDEO_MODEL } from "./video-runtime-config.js";
 
-const MAX_RETRIES = 2;
-
-const CAPTION_RULES = {
+export const CAPTION_RULES = {
   firstLineMaxChars: 40,
-  disallowedOpeners: ["I ", "My ", "This ", "We ", "Our "],
+  disallowedOpenerRegex: /^(I|My|This|We|Our)\b/i,
+  forbiddenHashtags: new Set(["#fyp", "#viral", "#foryou", "#trending", "fyp", "viral", "foryou", "trending"]),
   hashtagMin: 3,
   hashtagMax: 5,
   trendingHashtagMax: 1,
@@ -34,11 +37,16 @@ const CAPTION_RULES = {
   maxEmojiInFullCaption: 3,
 } as const;
 
+export { PLATFORM_CHAR_CAPS };
+
 export interface CaptionGenerationInput {
   topic: string;
   tone: string;
   platform: VideoExportPlatform;
+  scriptText?: string;
   viralitySummary?: string;
+  signal?: AbortSignal;
+  onModelAcquired?: (stage: "finalizing", modelTag: string) => void;
 }
 
 export interface CaptionGenerationResult {
@@ -46,30 +54,71 @@ export interface CaptionGenerationResult {
   validation: CaptionValidation;
 }
 
-function toLegacyAwarePlatform(platform: VideoExportPlatform): string {
-  if (platform === "shorts") return "youtube_shorts";
-  return platform;
+interface OracleNarrativeOutput {
+  firstLine: string;
+  body: string;
+  cta: string;
+  soundSuggestion: string;
 }
 
-async function callPilotModel(prompt: string): Promise<string> {
+interface PilotHashtagOutput {
+  broad: string[];
+  niche: string[];
+  trending: string[];
+}
+
+// ─── Oracle Narrative Generator ───────────────────────────────────────────────
+
+async function callOracleNarrative(
+  input: CaptionGenerationInput,
+  signal?: AbortSignal,
+): Promise<OracleNarrativeOutput | null> {
   const orchestrator = ModelOrchestrator.getInstance();
-  const requestedTag = resolveCanonicalTag(loadEnv().SWARMX_MODEL_FAST);
-  const callConfig = getAdaptiveCallConfig(requestedTag, "fast_chat");
+  const oracleTag = isLowRamVideoMode()
+    ? LOW_RAM_VIDEO_MODEL
+    : resolveCanonicalTag(loadEnv().SWARMX_MODEL_REASON);
+  const callConfig = getAdaptiveCallConfig(oracleTag, "deep_reasoning");
 
   if (callConfig.circuitOpen) {
-    throw new Error("caption_generator_circuit_open");
+    log.warn({ modelTag: oracleTag }, "Oracle circuit open — skipping narrative generation");
+    return null;
   }
 
-  const modelRequest = await orchestrator.requestModel(callConfig.modelTag);
+  let modelRequest;
   try {
-    const { text } = await withTimeout(
+    modelRequest = await orchestrator.requestModel(callConfig.modelTag);
+  } catch (err) {
+    log.warn({ modelTag: callConfig.modelTag, error: err }, "Failed to request Oracle model");
+    return null;
+  }
+
+  input.onModelAcquired?.("finalizing", modelRequest.modelTag);
+
+  const prompt = [
+    `Platform: ${input.platform}`,
+    `Topic: ${input.topic}`,
+    `Tone: ${input.tone}`,
+    input.scriptText ? `Script:\n${input.scriptText}` : "",
+    input.viralitySummary ? `Virality Context: ${input.viralitySummary}` : "",
+    "Generate the narrative component of a short-form video caption.",
+    "Output strict JSON only with keys: firstLine, body, cta, soundSuggestion.",
+    "Rules:",
+    "- firstLine must be <= 40 characters.",
+    "- firstLine must NOT begin with 'I', 'My', 'This', 'We', or 'Our'.",
+    "- body must be high-converting context without any hashtags.",
+    "- cta must be 5 to 8 words specific call to action.",
+    "- soundSuggestion must describe audio tempo, BPM, energy, and instruments ONLY (no URLs, no artist names, no track titles).",
+  ].filter(Boolean).join("\n\n");
+
+  try {
+    const { text: raw } = await withTimeout(
       generateOllamaText({
         model: modelRequest.modelTag,
         prompt: [
-          "You generate high-performance short-form video captions.",
-          "Output JSON only with keys: firstLine, body, cta, hashtags, soundSuggestion.",
+          "Respond with valid JSON only. Do not include markdown, prose, or reasoning blocks.",
           prompt,
         ].join("\n\n"),
+        ...(signal ? { signal } : {}),
         maxTokens: modelRequest.overrides.num_predict ?? callConfig.overrides.num_predict ?? 512,
         overrides: {
           ...callConfig.overrides,
@@ -78,21 +127,109 @@ async function callPilotModel(prompt: string): Promise<string> {
         },
       }),
       callConfig.timeoutMs,
-      "caption_generator_fast_chat",
+      "seo_finalizer_oracle_narrative",
     );
     recordSuccess(modelRequest.modelTag);
-    return text;
+
+    const sanitized = sanitizeReasoningOutput(raw);
+    const extracted = extractJson<OracleNarrativeOutput>(sanitized.text);
+    return extracted.ok ? extracted.data : null;
   } catch (error) {
     recordFailure(modelRequest.modelTag);
-    throw error;
+    log.warn({ modelTag: modelRequest.modelTag, error }, "Oracle caption narrative generation failed");
+    return null;
+  } finally {
+    orchestrator.onModelCallComplete(modelRequest.modelTag);
+    // SINGLE-7B LOCK: Evict Oracle before loading Pilot
+    await orchestrator.unloadModel(modelRequest.modelTag).catch(() => {});
+  }
+}
+
+// ─── Pilot Hashtag Generator ──────────────────────────────────────────────────
+
+async function callPilotHashtags(
+  input: CaptionGenerationInput,
+  narrativeContext: string,
+  signal?: AbortSignal,
+): Promise<PilotHashtagOutput | null> {
+  const orchestrator = ModelOrchestrator.getInstance();
+  const pilotTag = isLowRamVideoMode()
+    ? LOW_RAM_VIDEO_MODEL
+    : resolveCanonicalTag(loadEnv().SWARMX_MODEL_FAST);
+  const callConfig = getAdaptiveCallConfig(pilotTag, "fast_chat");
+
+  if (callConfig.circuitOpen) {
+    log.warn({ modelTag: pilotTag }, "Pilot circuit open — skipping hashtag generation");
+    return null;
+  }
+
+  let modelRequest;
+  try {
+    modelRequest = await orchestrator.requestModel(callConfig.modelTag);
+  } catch (err) {
+    log.warn({ modelTag: callConfig.modelTag, error: err }, "Failed to request Pilot model");
+    return null;
+  }
+
+  const prompt = [
+    `Platform: ${input.platform}`,
+    `Topic: ${input.topic}`,
+    `Caption Narrative: ${narrativeContext}`,
+    "Generate a structured hashtag set for SEO discoverability.",
+    "Output strict JSON only with keys: broad, niche, trending.",
+    "Rules:",
+    "- broad: 1 to 2 wide-reach discovery hashtags (e.g., #buildinpublic, #tech)",
+    "- niche: at least 1 highly specific community hashtag (e.g., #nextjs14, #fintech)",
+    "- NEVER include #fyp, #viral, #foryou, or #trending in any category",
+    "- trending: at most 1 trending hashtag (or empty array [] if none)",
+    "- Total hashtags across all 3 categories must sum to 3, 4, or 5.",
+  ].join("\n\n");
+
+  try {
+    const { text: raw } = await withTimeout(
+      generateOllamaText({
+        model: modelRequest.modelTag,
+        prompt: [
+          "You generate high-performing short-form video hashtags.",
+          "Output JSON only with keys: broad, niche, trending.",
+          prompt,
+        ].join("\n\n"),
+        ...(signal ? { signal } : {}),
+        maxTokens: modelRequest.overrides.num_predict ?? callConfig.overrides.num_predict ?? 256,
+        overrides: {
+          ...callConfig.overrides,
+          ...modelRequest.overrides,
+          temperature: 0.2,
+        },
+      }),
+      callConfig.timeoutMs,
+      "seo_finalizer_pilot_hashtags",
+    );
+    recordSuccess(modelRequest.modelTag);
+
+    const sanitized = sanitizeReasoningOutput(raw);
+    const extracted = extractJson<PilotHashtagOutput>(sanitized.text);
+    return extracted.ok ? extracted.data : null;
+  } catch (error) {
+    recordFailure(modelRequest.modelTag);
+    log.warn({ modelTag: modelRequest.modelTag, error }, "Pilot hashtag generation failed");
+    return null;
   } finally {
     orchestrator.onModelCallComplete(modelRequest.modelTag);
   }
 }
 
+// ─── Normalization & Validation ───────────────────────────────────────────────
+
+function normalizeHashtag(tag: string): string {
+  const trimmed = tag.trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
+
 export function validateCaption(
   draft: CaptionDraft,
-  _platform: VideoExportPlatform,
+  platform: VideoExportPlatform,
 ): CaptionValidation {
   const violations: string[] = [];
 
@@ -100,16 +237,28 @@ export function validateCaption(
     violations.push(`firstLine must be <= ${CAPTION_RULES.firstLineMaxChars} characters`);
   }
 
-  const startsWithDisallowed = CAPTION_RULES.disallowedOpeners.some((opener) =>
-    draft.firstLine.trimStart().toLowerCase().startsWith(opener.toLowerCase()),
-  );
-  if (startsWithDisallowed) {
+  if (CAPTION_RULES.disallowedOpenerRegex.test(draft.firstLine.trim())) {
     violations.push("firstLine cannot start with I, My, This, We, or Our");
   }
 
-  const totalHashtags =
-    draft.hashtags.broad.length + draft.hashtags.niche.length + draft.hashtags.trending.length;
-  if (totalHashtags < CAPTION_RULES.hashtagMin || totalHashtags > CAPTION_RULES.hashtagMax) {
+  if (draft.hashtags.niche.length === 0) {
+    violations.push("hashtags.niche must contain at least 1 community tag");
+  }
+
+  const allTags = [
+    ...draft.hashtags.broad,
+    ...draft.hashtags.niche,
+    ...draft.hashtags.trending,
+  ];
+
+  const forbiddenFound = allTags.filter((t) =>
+    CAPTION_RULES.forbiddenHashtags.has(t.toLowerCase())
+  );
+  if (forbiddenFound.length > 0) {
+    violations.push(`hashtags cannot contain forbidden tags (${forbiddenFound.join(", ")})`);
+  }
+
+  if (allTags.length < CAPTION_RULES.hashtagMin || allTags.length > CAPTION_RULES.hashtagMax) {
     violations.push(`total hashtag count must be between ${CAPTION_RULES.hashtagMin} and ${CAPTION_RULES.hashtagMax}`);
   }
 
@@ -121,19 +270,26 @@ export function validateCaption(
     violations.push("hashtags must not appear in firstLine or body");
   }
 
-  if (CAPTION_RULES.soundSuggestionNoUrl && draft.soundSuggestion && /(https?:\/\/|www\.|spotify|soundcloud|apple music)/i.test(draft.soundSuggestion)) {
+  if (CAPTION_RULES.soundSuggestionNoUrl && draft.soundSuggestion && /(https?:\/\/|www\.|spotify|soundcloud|apple\s*music)/i.test(draft.soundSuggestion)) {
     violations.push("soundSuggestion must be descriptive text and cannot include a URL");
   }
 
   if (
     CAPTION_RULES.soundSuggestionNoArtist &&
     draft.soundSuggestion &&
-    /\b(feat\.?|ft\.?|by\s+[A-Z][a-z]+|\"[^\"]+\"|song|track|album)\b/.test(draft.soundSuggestion)
+    /\b(feat\.?|ft\.?|by\s+[A-Z][a-z]+|\"[^\"]+\"|song|track|album)\b/i.test(draft.soundSuggestion)
   ) {
     violations.push("soundSuggestion must describe tempo, energy, and instruments only");
   }
 
-  const fullCaption = `${draft.firstLine} ${draft.body} ${draft.cta}`;
+  const fullCaption = `${draft.firstLine}\n\n${draft.body}\n\n${draft.cta}\n\n${allTags.join(" ")}`.trim();
+  const platformKey = platform === "shorts" ? "shorts" : platform === "reels" ? "reels" : "tiktok";
+  const caps = PLATFORM_CHAR_CAPS[platformKey];
+
+  if (fullCaption.length > caps.hard) {
+    violations.push(`full caption (${fullCaption.length} chars) exceeds ${platformKey} hard cap of ${caps.hard} chars`);
+  }
+
   const emojiCount = (fullCaption.match(/[\u{1F300}-\u{1FAFF}]/gu) ?? []).length;
   if (emojiCount > CAPTION_RULES.maxEmojiInFullCaption) {
     violations.push(`caption must contain <= ${CAPTION_RULES.maxEmojiInFullCaption} emojis`);
@@ -145,125 +301,96 @@ export function validateCaption(
   };
 }
 
-function buildPrompt(input: CaptionGenerationInput, priorViolations: string[] = []): string {
-  const corrections =
-    priorViolations.length > 0
-      ? `\nValidation failures to fix:\n- ${priorViolations.join("\n- ")}`
-      : "";
-
-  return [
-    `Platform: ${toLegacyAwarePlatform(input.platform)}`,
-    `Topic: ${input.topic}`,
-    `Tone: ${input.tone}`,
-    `Virality context: ${input.viralitySummary ?? "No prior virality scoring available"}`,
-    "Output strict JSON only.",
-    "Schema:",
-    '{"firstLine":"...","body":"...","cta":"...","hashtags":{"broad":["..."],"niche":["..."],"trending":["..."]},"soundSuggestion":"tempo/energy/instruments only"}',
-    "Rules:",
-    "- firstLine length <= 40",
-    "- firstLine must not begin with I/My/This/We/Our",
-    "- hashtags total count 3 to 5",
-    "- at most 1 trending hashtag",
-    "- no hashtags in firstLine or body",
-    "- soundSuggestion must not include song title, artist, or URL",
-    "- Describe the audio style in terms of tempo, energy, and instruments only.",
-    corrections,
-  ].join("\n");
-}
-
-function toCaptionDraft(value: unknown): CaptionDraft | null {
-  const parsed = value as Partial<CaptionDraft>;
-  if (!parsed || typeof parsed !== "object") return null;
-  if (typeof parsed.firstLine !== "string") return null;
-  if (typeof parsed.body !== "string") return null;
-  if (typeof parsed.cta !== "string") return null;
-  if (!parsed.hashtags || typeof parsed.hashtags !== "object") return null;
-
-  const hashtags = parsed.hashtags as Partial<CaptionDraft["hashtags"]>;
-  if (!Array.isArray(hashtags.broad) || !Array.isArray(hashtags.niche) || !Array.isArray(hashtags.trending)) {
-    return null;
+export function buildDeterministicCaptionDraft(
+  input: CaptionGenerationInput,
+  scriptText?: string,
+): CaptionDraft {
+  let firstLine = "The crucial shift you cannot ignore.";
+  if (scriptText) {
+    const hookMatch = scriptText.match(/\[HOOK\]([\s\S]*?)(?=\[BODY\]|\[RESOLUTION\]|\[CTA\]|$)/i);
+    const hookLine = hookMatch && hookMatch[1] ? hookMatch[1].trim() : "";
+    if (hookLine && hookLine.length <= 40 && !CAPTION_RULES.disallowedOpenerRegex.test(hookLine)) {
+      firstLine = hookLine;
+    }
   }
 
+  const cleanNiche = (input.topic.toLowerCase().replace(/[^a-z0-9]/g, "") || "techtips").slice(0, 15);
+  const nicheTag = `#${cleanNiche}`;
+
   return {
-    firstLine: parsed.firstLine,
-    body: parsed.body,
-    cta: parsed.cta,
+    firstLine,
+    body: "Breakdown of the core framework and how to apply it immediately.",
+    cta: "Save this before your next build.",
     hashtags: {
-      broad: hashtags.broad.map(String),
-      niche: hashtags.niche.map(String),
-      trending: hashtags.trending.map(String),
+      broad: ["#buildinpublic", "#creator"],
+      niche: [nicheTag],
+      trending: [],
     },
-    ...(typeof parsed.soundSuggestion === "string"
-      ? { soundSuggestion: parsed.soundSuggestion }
-      : {}),
+    soundSuggestion: "Upbeat electronic with rising tension, 120-130 BPM, fast-cut bass",
   };
 }
 
+export async function generateFinalizerCaptionDraft(
+  input: CaptionGenerationInput,
+): Promise<CaptionGenerationResult> {
+  const narrative = await callOracleNarrative(input, input.signal);
+  const narrativeText = narrative ? `${narrative.firstLine} ${narrative.body}` : input.topic;
+  const hashtagSet = await callPilotHashtags(input, narrativeText, input.signal);
+
+  const fallback = buildDeterministicCaptionDraft(input, input.scriptText);
+
+  // Assemble and repair
+  let firstLine = (narrative?.firstLine || fallback.firstLine).trim();
+  if (firstLine.length > CAPTION_RULES.firstLineMaxChars) {
+    firstLine = firstLine.slice(0, CAPTION_RULES.firstLineMaxChars).trim();
+  }
+  if (CAPTION_RULES.disallowedOpenerRegex.test(firstLine)) {
+    firstLine = fallback.firstLine;
+  }
+
+  const body = (narrative?.body || fallback.body).replace(/#\w+/g, "").trim();
+  const cta = (narrative?.cta || fallback.cta).trim();
+  let soundSuggestion = narrative?.soundSuggestion || fallback.soundSuggestion;
+  if (
+    soundSuggestion &&
+    (/(https?:\/\/|www\.|spotify|soundcloud|apple\s*music)/i.test(soundSuggestion) ||
+      /\b(feat\.?|ft\.?|by\s+[A-Z][a-z]+|\"[^\"]+\"|song|track|album)\b/i.test(soundSuggestion))
+  ) {
+    soundSuggestion = fallback.soundSuggestion;
+  }
+
+  const rawBroad = (hashtagSet?.broad ?? fallback.hashtags.broad).map(normalizeHashtag).filter(Boolean);
+  const rawNiche = (hashtagSet?.niche ?? fallback.hashtags.niche)
+    .map(normalizeHashtag)
+    .filter((t) => Boolean(t) && !CAPTION_RULES.forbiddenHashtags.has(t.toLowerCase()));
+  const rawTrending = (hashtagSet?.trending ?? fallback.hashtags.trending)
+    .map(normalizeHashtag)
+    .filter((t) => Boolean(t) && !CAPTION_RULES.forbiddenHashtags.has(t.toLowerCase()))
+    .slice(0, 1);
+
+  const niche = rawNiche.length > 0 ? rawNiche : fallback.hashtags.niche;
+  const broad = rawBroad.length > 0 ? rawBroad.slice(0, 2) : fallback.hashtags.broad;
+  const trending = rawTrending;
+
+  const draft: CaptionDraft = {
+    firstLine,
+    body,
+    cta,
+    hashtags: { broad, niche, trending },
+    ...(soundSuggestion ? { soundSuggestion } : {}),
+  };
+
+  const validation = validateCaption(draft, input.platform);
+  return { draft, validation };
+}
+
 export async function generateCaptionDraft(input: CaptionGenerationInput): Promise<CaptionDraft> {
-  const result = await generateCaptionDraftWithValidation(input);
+  const result = await generateFinalizerCaptionDraft(input);
   return result.draft;
 }
 
 export async function generateCaptionDraftWithValidation(
   input: CaptionGenerationInput,
 ): Promise<CaptionGenerationResult> {
-  let violations: string[] = [];
-  let lastDraft: CaptionDraft | null = null;
-  let lastValidation: CaptionValidation | null = null;
-  let retryByRule = new Map<string, number>();
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-    const prompt = buildPrompt(input, violations);
-    const modelText = await callPilotModel(prompt);
-    const extracted = extractJson<unknown>(modelText);
-    const draft = extracted.ok ? toCaptionDraft(extracted.data) : null;
-
-    if (!draft) {
-      const invalidJsonRule = "model output was not valid CaptionDraft JSON";
-      const nextCount = (retryByRule.get(invalidJsonRule) ?? 0) + 1;
-      retryByRule.set(invalidJsonRule, nextCount);
-      violations = [invalidJsonRule];
-      lastValidation = {
-        valid: false,
-        violations,
-      };
-      if (nextCount > MAX_RETRIES) {
-        break;
-      }
-      continue;
-    }
-
-    lastDraft = draft;
-
-    const validation = validateCaption(draft, input.platform);
-    lastValidation = validation;
-    if (validation.valid) {
-      return {
-        draft,
-        validation,
-      };
-    }
-
-    violations = validation.violations;
-    for (const rule of validation.violations) {
-      retryByRule.set(rule, (retryByRule.get(rule) ?? 0) + 1);
-    }
-
-    const exhaustedRule = validation.violations.find((rule) => (retryByRule.get(rule) ?? 0) > MAX_RETRIES);
-    if (exhaustedRule) {
-      break;
-    }
-  }
-
-  if (lastDraft) {
-    return {
-      draft: lastDraft,
-      validation: lastValidation ?? {
-        valid: false,
-        violations,
-      },
-    };
-  }
-
-  throw new Error("caption_generation_failed");
+  return generateFinalizerCaptionDraft(input);
 }

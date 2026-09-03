@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -10,6 +10,7 @@ import type {
   RendererCapabilityTier,
   VoiceProsodySection,
   VoiceArtifact,
+  VideoTone,
 } from "@swarmx/types/video-types";
 import type { VideoJobRequest } from "../types/video.js";
 import { outputDir, resolveOutputPath } from "./video-assets.js";
@@ -91,6 +92,42 @@ const TONE_ACCENTS: Record<string, string> = {
   kinetic_text:  "0xffcc00",  // bright amber — bold kinetic accent; distinct from minimal's white
 };
 
+export type ProceduralBackgroundPreset =
+  | "gradient_flow"
+  | "fractal_noise"
+  | "plasma_pulse"
+  | "minimal_grid";
+
+export const TONE_PROCEDURAL_PRESETS: Record<VideoTone, ProceduralBackgroundPreset> = {
+  cinematic:      "gradient_flow",
+  warm:           "gradient_flow",
+  educational:    "fractal_noise",
+  faceless_broll: "fractal_noise",
+  urgent:         "plasma_pulse",
+  contrarian:     "plasma_pulse",
+  minimal:        "minimal_grid",
+  kinetic_text:   "minimal_grid",
+};
+
+export function buildProceduralBackgroundFilter(
+  tone: VideoTone | undefined,
+  bgColor: string,
+  duration: number,
+): string {
+  const preset: ProceduralBackgroundPreset = (tone && TONE_PROCEDURAL_PRESETS[tone]) ?? "fractal_noise";
+  switch (preset) {
+    case "gradient_flow":
+      return `color=c=${bgColor}:s=360x640:r=30:d=${duration},geq=r='14+16*sin(2*PI*(X/W+T/7))':g='10+18*sin(2*PI*(Y/H+T/9))':b='30+32*cos(2*PI*(X/W+Y/H+T/6))',scale=720:1280:flags=bilinear,vignette=PI/3.2`;
+    case "fractal_noise":
+      return `color=c=${bgColor}:s=360x640:r=30:d=${duration},geq=r='12+14*sin(2*PI*(X/20+T*0.5))+6*sin(2*PI*(Y/25-T*0.4))':g='14+16*sin(2*PI*(X/28-T*0.3))+8*sin(2*PI*(Y/22+T*0.6))':b='22+24*cos(2*PI*((X+Y)/30+T*0.4))',colorchannelmixer=0.4:0.3:0.3:0:0.3:0.4:0.3:0:0.3:0.3:0.4,scale=720:1280:flags=bilinear,vignette=PI/3.2`;
+    case "plasma_pulse":
+      return `color=c=${bgColor}:s=360x640:r=30:d=${duration},geq=r='32+26*sin(2*PI*T*0.7+X/W*3.14)':g='8+6*sin(2*PI*T*0.4+Y/H*3.14)':b='16+12*cos(2*PI*T*0.5+(X+Y)/(W+H)*3.14)',scale=720:1280:flags=bilinear,vignette=PI/3.2`;
+    case "minimal_grid":
+      return `color=c=${bgColor}:s=720x1280:r=30:d=${duration},drawgrid=width=72:height=72:thickness=1:color=white@0.06,geq=r='r(X,Y)*(0.88+0.12*sin(2*PI*T*0.4))':g='g(X,Y)*(0.88+0.12*sin(2*PI*T*0.4))':b='b(X,Y)*(0.88+0.12*sin(2*PI*T*0.4))',vignette=PI/3.5`;
+  }
+}
+
+
 const NICHE_ACCENT_OFFSETS: Record<NonNullable<VideoJobRequest["niche"]>, { hue: number; saturation: number; lightness: number }> = {
   motivational: { hue: 8, saturation: 6, lightness: 4 },
   finance: { hue: 150, saturation: -8, lightness: -2 },
@@ -171,19 +208,32 @@ async function commandAvailable(command: string, versionFlag = "-version"): Prom
   }
 }
 
-function discoverFont(): string {
-  const candidates = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-  ];
-  const found = candidates.find((candidate) => existsSync(candidate));
-  if (!found) {
-    throw Object.assign(new Error("No system font found for FFmpeg drawtext"), {
-      code: "FONT_UNAVAILABLE",
-    });
+export function discoverFont(): string {
+  const fontDir = "/usr/share/fonts/truetype";
+  if (existsSync(fontDir)) {
+    const scanDir = (dir: string): string | null => {
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = resolve(dir, entry.name);
+          if (entry.isDirectory()) {
+            const nested = scanDir(fullPath);
+            if (nested) return nested;
+          } else if (entry.isFile() && entry.name.endsWith(".ttf")) {
+            return fullPath;
+          }
+        }
+      } catch {
+        // ignore unreadable directory
+      }
+      return null;
+    };
+    const found = scanDir(fontDir);
+    if (found) return found;
   }
-  return found;
+  throw Object.assign(new Error("No system font found for FFmpeg drawtext in /usr/share/fonts/truetype"), {
+    code: "FONT_UNAVAILABLE",
+  });
 }
 
 function clampDuration(requested: number | undefined): number {
@@ -321,32 +371,52 @@ function extractScriptSections(scriptText: string): {
   };
 }
 
+function chunkSentenceToMicroCards(sentence: string, maxWordsPerCard = 6): string[] {
+  const words = sentence.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWordsPerCard) return [sentence.trim()];
+  const chunks: string[] = [];
+  for (let i = 0; i < words.length; i += maxWordsPerCard) {
+    chunks.push(words.slice(i, i + maxWordsPerCard).join(" "));
+  }
+  return chunks;
+}
+
 function renderCards(input: FfmpegRenderInput): string[] {
   const sections = input.scriptText ? extractScriptSections(input.scriptText) : null;
-  const frameLines = input.storyboardFrames.map((l) => l.trim()).filter(Boolean);
+  const frameLines = (input.storyboardFrames ?? []).map((l) => l.trim()).filter(Boolean);
   const audience = input.request.audience?.trim() || "people who need this now";
   const tone = input.request.tone ?? "educational";
 
   if (sections && (sections.hook || sections.cta)) {
-    // Use structured script content — much higher quality output.
-    const cards: string[] = [];
+    // Use structured script content chunked into punchy micro-cards.
+    const rawCards: string[] = [];
 
-    cards.push(sections.hook || titleFromRequest(input.request));
+    if (sections.hook) {
+      rawCards.push(...chunkSentenceToMicroCards(sections.hook, 6));
+    } else {
+      rawCards.push(titleFromRequest(input.request));
+    }
 
     if (sections.body.length > 0) {
-      cards.push(...sections.body);
+      for (const sentence of sections.body) {
+        rawCards.push(...chunkSentenceToMicroCards(sentence, 6));
+      }
     } else {
       // Fall back to storyboard frame descriptions.
-      cards.push(
+      rawCards.push(
         firstNonEmpty(frameLines.slice(0, 1), "Insight that changes how you see this."),
         firstNonEmpty(frameLines.slice(1, 2), "The detail most people overlook."),
       );
     }
 
-    if (sections.resolution) cards.push(sections.resolution);
-    if (sections.cta)        cards.push(sections.cta);
+    if (sections.resolution) {
+      rawCards.push(...chunkSentenceToMicroCards(sections.resolution, 6));
+    }
+    if (sections.cta) {
+      rawCards.push(...chunkSentenceToMicroCards(sections.cta, 6));
+    }
 
-    return cards.slice(0, 7);
+    return rawCards.slice(0, 8);
   }
 
   // Fallback: storyboard frames + generic structure.
@@ -591,6 +661,10 @@ function computeCardTimings(cards: string[], duration: number): CardTiming[] {
   return timings;
 }
 
+export function hasKeyPhraseEmphasis(text: string): boolean {
+  return /\*[^*]+\*/.test(text) || /\b[A-Z]{3,}\b/.test(text);
+}
+
 // Build the filter_complex chain: fade in, per-card drawtext, progress bar, fade out.
 function buildFilterComplex(
   fontFile: string,
@@ -610,7 +684,16 @@ function buildFilterComplex(
     const { start, end } = timing;
 
     const cardText = cardTexts[index] ?? "";
-    const fontSize = fontSizeForText(cardText, styleConfig.baseFontSize);
+    const isEmphasized = hasKeyPhraseEmphasis(cardText);
+    const baseSize = fontSizeForText(cardText, styleConfig.baseFontSize);
+    const fontSizeExpr = isEmphasized
+      ? `'${baseSize}*(1+0.10*sin(2*PI*(t-${start})/max(0.4\\,${(end - start).toFixed(2)})))'`
+      : String(baseSize);
+
+    const fontColor = isEmphasized ? `${accentRgb}` : "white@0.95";
+    const boxColor = `black@${styleConfig.boxOpacity}`;
+    const boxBorderW = isEmphasized ? styleConfig.borderW + 6 : styleConfig.borderW;
+
     const enableExpr = index === textFiles.length - 1
       ? `gte(t,${start})*lte(t,${end})`
       : `gte(t,${start})*lt(t,${end})`;
@@ -618,12 +701,15 @@ function buildFilterComplex(
     return [
       `drawtext=fontfile=${fontFile}`,
       `textfile=${file}`,
-      "fontcolor=white",
-      `fontsize=${fontSize}`,
+      `fontcolor=${fontColor}`,
+      `fontsize=${fontSizeExpr}`,
       "line_spacing=12",
       "box=1",
-      `boxcolor=black@${styleConfig.boxOpacity}`,
-      `boxborderw=${styleConfig.borderW}`,
+      `boxcolor=${boxColor}`,
+      `boxborderw=${boxBorderW}`,
+      "shadowcolor=black@0.90",
+      "shadowx=4",
+      "shadowy=4",
       "x=(w-text_w)/2",
       `y=${styleConfig.yExpr}`,
       `enable='${enableExpr}'`,
@@ -1001,7 +1087,7 @@ export async function renderWithFfmpeg(input: FfmpegRenderInput): Promise<{ outp
 
     // Write each card to a temp text file for drawtext=textfile= (avoids
     // shell-quoting issues with apostrophes and special characters).
-    const displayCards = cards.map((card) => wrapCardText(card, styleConfig.baseFontSize));
+    const displayCards = cards.map((card) => wrapCardText(card.replace(/\*([^*]+)\*/g, "$1"), styleConfig.baseFontSize));
     const textFiles: string[] = [];
     for (let i = 0; i < displayCards.length; i += 1) {
       const file = join(workDir, `card-${i}-${randomUUID()}.txt`);
@@ -1093,6 +1179,8 @@ export async function renderWithFfmpeg(input: FfmpegRenderInput): Promise<{ outp
     const inputArgs = voiceArtifact
       ? ["-i", narrationPath]
       : ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
+
+    const proceduralBgFilter = buildProceduralBackgroundFilter(input.request.tone, bgColor, duration);
 
     await execFileChecked("ffmpeg", [
       "-y",

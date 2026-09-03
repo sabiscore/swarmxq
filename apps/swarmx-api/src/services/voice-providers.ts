@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type {
@@ -332,6 +332,22 @@ abstract class BaseVoiceProvider implements VoiceProvider {
   }
 }
 
+function resolveVenvPython(): string {
+  const cwd = process.cwd();
+  const candidates = [
+    resolve(cwd, ".venv/bin/python3"),
+    resolve(cwd, ".venv/bin/python"),
+    resolve(cwd, "../../.venv/bin/python3"),
+    resolve(cwd, "../../.venv/bin/python"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return "python3";
+}
+
 export class KokoroVoiceProvider extends BaseVoiceProvider {
   id = "kokoro";
   qualityTier: VoiceQualityTier = "neural_local";
@@ -340,34 +356,38 @@ export class KokoroVoiceProvider extends BaseVoiceProvider {
     const env = loadEnv();
     try {
       const response = await fetch(`${env.SWARMX_TTS_URL}/health`, {
-        signal: AbortSignal.timeout(2_000),
+        signal: AbortSignal.timeout(1_500),
       });
-      if (!response.ok) {
-        return {
-          providerId: this.id,
-          state: "unavailable",
-          qualityTier: this.qualityTier,
-          supportsStreaming: false,
-          supportsCancellation: true,
-          requiresExternalDownload: true,
-          reason: `Kokoro health probe returned ${response.status}`,
-          action: "Start python -m swarmx.services.kokoro_tts_server after installing kokoro",
-          probedAt: new Date().toISOString(),
-        };
+      if (response.ok) {
+        const body = await response.json().catch(() => ({})) as { engine?: string; status?: string };
+        const serviceReady = body.engine === "kokoro";
+        if (serviceReady) {
+          return {
+            providerId: this.id,
+            state: "available",
+            qualityTier: this.qualityTier,
+            supportsStreaming: false,
+            supportsCancellation: true,
+            requiresExternalDownload: false,
+            probedAt: new Date().toISOString(),
+          };
+        }
       }
-      const body = await response.json().catch(() => ({})) as { engine?: string; status?: string };
-      const serviceReady = body.engine === "kokoro";
+    } catch {
+      // Fall through to direct CLI probe
+    }
+
+    // Direct Python CLI probe fallback
+    try {
+      const pythonBin = resolveVenvPython();
+      await execFileChecked(pythonBin, ["-m", "swarmx.services.kokoro_cli", "--probe"]);
       return {
         providerId: this.id,
-        state: serviceReady ? "available" : "degraded",
+        state: "available",
         qualityTier: this.qualityTier,
         supportsStreaming: false,
         supportsCancellation: true,
         requiresExternalDownload: false,
-        ...(serviceReady ? {} : {
-          reason: "Kokoro service is reachable but did not report the kokoro engine",
-          action: "Check Kokoro service logs and installed Python package",
-        }),
         probedAt: new Date().toISOString(),
       };
     } catch {
@@ -378,8 +398,8 @@ export class KokoroVoiceProvider extends BaseVoiceProvider {
         supportsStreaming: false,
         supportsCancellation: true,
         requiresExternalDownload: true,
-        reason: `Kokoro TTS service is not reachable at ${env.SWARMX_TTS_URL}`,
-        action: "Install kokoro in the Python environment and start python -m swarmx.services.kokoro_tts_server",
+        reason: `Kokoro TTS service is not reachable at ${env.SWARMX_TTS_URL} and direct CLI probe failed`,
+        action: "Install kokoro in the Python environment and verify .venv/bin/python3",
         probedAt: new Date().toISOString(),
       };
     }

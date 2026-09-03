@@ -166,6 +166,7 @@ export default function VideoJobDetailPage() {
                 <video
                   src={job.output.publicUrl}
                   controls
+                  autoPlay={false}
                   aria-label={`Generated video: ${job.request.prompt.slice(0, 60)}`}
                   className="h-full w-full object-contain"
                 />

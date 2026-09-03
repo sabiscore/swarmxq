@@ -1,5 +1,6 @@
 "use client";
 
+import { log } from "@/lib/logger";
 import { useEffect } from "react";
 import { Server, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ interface ErrorProps {
 
 export default function SystemError({ error, reset }: ErrorProps) {
   useEffect(() => {
-    console.error("[SystemPage] Error boundary caught:", error);
+    log.error("[SystemPage] Error boundary caught:", error);
   }, [error]);
 
   return (

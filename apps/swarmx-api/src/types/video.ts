@@ -23,8 +23,14 @@ import type {
   VoiceStoryMode,
   VoiceArtifact,
   ScriptQualityWarning,
+  CaptionDraft,
+  VideoTemplate,
 } from "@swarmx/types/video-types";
+import { PLATFORM_CHAR_CAPS } from "@swarmx/types";
 import type { SeriesEpisodeContext } from "@swarmx/types/series-types";
+
+export type { VideoTemplate, CaptionDraft };
+export { PLATFORM_CHAR_CAPS };
 
 // ─── Job Lifecycle ────────────────────────────────────────────────────────────
 
@@ -34,6 +40,7 @@ export type VideoJobStage =
   | "intent_classification"
   | "planning"
   | "scripting"
+  | "auditor_review"
   | "storyboard_generation"
   | "render_assembly"
   | "finalizing";
@@ -42,6 +49,7 @@ export const VIDEO_JOB_STAGE_ORDER: VideoJobStage[] = [
   "intent_classification",
   "planning",
   "scripting",
+  "auditor_review",
   "storyboard_generation",
   "render_assembly",
   "finalizing",
@@ -51,6 +59,7 @@ export const VIDEO_JOB_STAGE_LABELS: Record<VideoJobStage, string> = {
   intent_classification: "Intent Classification",
   planning: "Planning",
   scripting: "Scripting",
+  auditor_review: "Auditor Gate",
   storyboard_generation: "Storyboard Generation",
   render_assembly: "Render & Assembly",
   finalizing: "Finalizing",
@@ -67,6 +76,8 @@ export interface VideoJobRequest {
   niche?: "motivational" | "finance" | "facts" | "true_crime" | "tech" | "other";
   /** Structural template family. */
   templateFamily?: "myth-vs-fact" | "list/countdown" | "mystery/reveal" | "product-demo" | "quote-to-insight" | "chart/data" | "motivational" | "series-recap";
+  /** Canonical story template (4-member enum). */
+  template?: VideoTemplate;
   /** Preferred output duration in seconds. Clamped to 15–180 by orchestrator. */
   targetDurationSeconds?: number;
   /** Model tier override — defaults to auto-routing via complexity score. */

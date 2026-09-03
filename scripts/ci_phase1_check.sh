@@ -298,7 +298,7 @@ header "11. Phase 4 — Legacy Dashboard Retirement Markers"
 
 LEGACY_HTML="${ROOT}/dashboard/index.html"
 LEGACY_JS="${ROOT}/dashboard/app.js"
-LEGACY_README="${ROOT}/dashboard-legacy/README.md"
+LEGACY_README="${ROOT}/docs/archive/dashboard-legacy/README.md"
 
 for f_check in "$LEGACY_HTML:DEPRECATED" "$LEGACY_JS:DEPRECATED" "$LEGACY_README:DEPRECATED"; do
     f="${f_check%%:*}"

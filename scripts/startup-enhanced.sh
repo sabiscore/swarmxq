@@ -22,6 +22,12 @@ readonly ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd -P)"
 
 # [V6.2-FIX-03] Load repo-local persistent environment overrides before
 # resolving startup defaults so values survive across shell sessions.
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
 if [[ -f "$ROOT_DIR/.env.local" ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -43,6 +49,10 @@ readonly API_PORT="${SWARMX_API_PORT:-3001}"
 readonly DASHBOARD_PORT="3000"
 readonly LEGACY_ROOT_HINT="/SwarmX-1.5"
 readonly OLLAMA_AUTOSTART="${SWARMX_START_OLLAMA_IF_DOWN:-1}"
+readonly KOKORO_AUTOSTART="${SWARMX_START_KOKORO_IF_DOWN:-1}"
+readonly KOKORO_URL="${SWARMX_TTS_URL:-http://127.0.0.1:8888}"
+readonly KOKORO_LOG="${SWARMX_KOKORO_LOG:-${SWARM_HOME:-.swarmx}/logs/kokoro-tts.log}"
+readonly KOKORO_PID_FILE="${SWARMX_KOKORO_PID_FILE:-${SWARM_HOME:-.swarmx}/run/kokoro-tts.pid}"
 
 # ─── Flags ───────────────────────────────────────────────────────────────────
 CHECK_ONLY=false
@@ -526,6 +536,73 @@ check_ollama() {
   fi
 }
 
+# ─── Health Check: Kokoro TTS ────────────────────────────────────────────────
+probe_kokoro() {
+  curl -s --connect-timeout 2 --max-time 3 "$KOKORO_URL/health" >/dev/null 2>&1
+}
+
+check_kokoro() {
+  if [[ "${SWARMX_TTS_PROVIDER:-auto}" == "silent_fixture" || "${SWARMX_TTS_PROVIDER:-auto}" == "espeak" ]]; then
+    log_info "Kokoro startup skipped for SWARMX_TTS_PROVIDER=${SWARMX_TTS_PROVIDER}"
+    return 0
+  fi
+
+  log_info "Checking Kokoro TTS service at $KOKORO_URL..."
+  if probe_kokoro; then
+    log_success "Kokoro TTS is responding"
+    return 0
+  fi
+
+  if [[ "$KOKORO_AUTOSTART" != "1" ]]; then
+    log_warning "Kokoro TTS is unavailable and autostart is disabled"
+    return 0
+  fi
+
+  local kokoro_python="$ROOT_DIR/.venv/bin/python"
+  if [[ ! -x "$kokoro_python" ]]; then
+    log_warning "Kokoro TTS skipped: repo Python executable not found at $kokoro_python"
+    return 0
+  fi
+  if ! "$kokoro_python" -c 'import kokoro, soundfile' >/dev/null 2>&1; then
+    log_warning "Kokoro TTS skipped: Python dependencies kokoro and soundfile are not installed"
+    return 0
+  fi
+
+  local kokoro_port
+  kokoro_port=$(printf '%s' "$KOKORO_URL" | grep -oP ':[0-9]+$' | tr -d ':' || true)
+  [[ -z "$kokoro_port" ]] && kokoro_port="8888"
+  local existing_pid
+  existing_pid=$(lsof -Pi :"$kokoro_port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
+  if [[ -n "$existing_pid" ]]; then
+    log_warning "Kokoro port $kokoro_port is occupied but health is unavailable (PID=$existing_pid)"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$KOKORO_LOG")" "$(dirname "$KOKORO_PID_FILE")"
+  log_info "Starting Kokoro TTS in the repository virtualenv..."
+  nohup env SWARMX_TTS_URL="$KOKORO_URL" "$kokoro_python" -m swarmx.services.kokoro_tts_server \
+    --port "$kokoro_port" >> "$KOKORO_LOG" 2>&1 &
+  local kokoro_pid=$!
+  printf '%s\n' "$kokoro_pid" > "$KOKORO_PID_FILE"
+  disown "$kokoro_pid" 2>/dev/null || true
+
+  local attempt=1
+  while [[ $attempt -le 15 ]]; do
+    if probe_kokoro; then
+      log_success "Kokoro TTS autostart succeeded (PID=$kokoro_pid)"
+      return 0
+    fi
+    if ! kill -0 "$kokoro_pid" 2>/dev/null; then
+      log_warning "Kokoro TTS exited during startup; see $KOKORO_LOG"
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  log_warning "Kokoro TTS did not become ready within 15s; startup continues with voice fallback"
+  return 0
+}
+
 # ─── Health Check: Python Environment ─────────────────────────────────────────
 check_python() {
   log_info "Checking Python environment..."
@@ -783,6 +860,7 @@ main() {
   # exports cannot hide unsafe low-RAM settings.
   setup_environment
   setup_ollama_runtime_tuning
+  check_kokoro || true  # Non-blocking; API health remains authoritative
 
   # Ensure swarmxq-video-model exists (21-token system prompt + n_batch=256).
   # Must run after Ollama is checked and after ollama runtime tuning is set.
@@ -805,15 +883,15 @@ main() {
   
   # Full-pipeline RAM gate: only enforced on the 16 GB path. Low-RAM mode (8 GB
   # effective profile) intentionally runs below this threshold.
-  if [[ "${SWARMX_EFFECTIVE_HOST_PROFILE:-}" == "16gb" && "${SWARMX_VIDEO_LOW_RAM_MODE:-0}" != "1" ]]; then
+  if [[ "${SWARMX_EFFECTIVE_HOST_PROFILE:-}" == "standard_cpu_16gb" && "${SWARMX_VIDEO_LOW_RAM_MODE:-0}" != "1" ]]; then
     local _avail_mb_gate
     _avail_mb_gate=$(detect_available_mem_mb)
-    if [[ "$_avail_mb_gate" -gt 0 && "$_avail_mb_gate" -lt 6170 ]]; then
-      log_error "Pre-launch RAM check FAILED: ${_avail_mb_gate} MB available (minimum 6170 MB for 16 GB profile)."
-      log_error "Options: free RAM, set SWARMX_VIDEO_LOW_RAM_MODE=1, or set SWARMX_EFFECTIVE_HOST_PROFILE=8gb."
+    if [[ "$_avail_mb_gate" -gt 0 && "$_avail_mb_gate" -lt 6220 ]]; then
+      log_error "Pre-launch RAM check FAILED: ${_avail_mb_gate} MB available (minimum 6220 MB for 16 GB profile with Auditor gate)."
+      log_error "Options: free RAM, set SWARMX_VIDEO_LOW_RAM_MODE=1, or set SWARMX_HOST_PROFILE=8gb."
       exit 1
     fi
-    log_info "Pre-launch RAM check passed: ${_avail_mb_gate} MB available (≥6170 MB required)"
+    log_info "Pre-launch RAM check passed: ${_avail_mb_gate} MB available (≥6220 MB required)"
   fi
 
   # Delegate to main startup script

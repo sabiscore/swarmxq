@@ -1,5 +1,6 @@
 "use client";
 
+import { log } from "@/lib/logger";
 import { useEffect } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ interface ErrorProps {
 
 export default function VideoError({ error, reset }: ErrorProps) {
   useEffect(() => {
-    console.error("[VideoPage] Error boundary caught:", error);
+    log.error("[VideoPage] Error boundary caught:", error);
   }, [error]);
 
   return (

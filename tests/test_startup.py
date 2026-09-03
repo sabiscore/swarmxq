@@ -178,3 +178,14 @@ def test_startup_enhanced_keeps_16gb_single_inference_policy(tmp_path: Path) -> 
     assert "Overriding OLLAMA_KEEP_ALIVE=3m to 0" in combined_output
     assert "HOST_PROFILE=standard_cpu_16gb EFFECTIVE_PROFILE=standard_cpu_16gb" in combined_output
     assert "PARALLEL=1 MAX_MODELS=2 KEEP_ALIVE=0" in combined_output
+
+
+def test_startup_script_owns_kokoro_lifecycle_and_standard_profile_gate() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    startup_source = (repo_root / "scripts" / "startup-enhanced.sh").read_text()
+
+    assert "SWARMX_START_KOKORO_IF_DOWN" in startup_source
+    assert "swarmx.services.kokoro_tts_server" in startup_source
+    assert '"$KOKORO_URL/health"' in startup_source
+    assert '"${SWARMX_EFFECTIVE_HOST_PROFILE:-}" == "standard_cpu_16gb"' in startup_source
+    assert "minimum 6220 MB" in startup_source

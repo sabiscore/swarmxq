@@ -89,7 +89,7 @@ The primary dashboard (`dashboard/`) is the design-forward APEX.15 version:
 - Keyboard shortcuts: R = refresh, E = evolve.
 - Visibility API: pauses polling when tab is hidden.
 
-The legacy dashboard is preserved in `dashboard-legacy/` for reference.
+The legacy dashboard is preserved in `docs/archive/dashboard-legacy/` for reference.
 
 ---
 

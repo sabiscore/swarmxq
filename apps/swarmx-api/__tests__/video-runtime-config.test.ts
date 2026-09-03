@@ -115,10 +115,10 @@ describe("resolveVideoModelTag", () => {
 });
 
 describe("videoModelTagsForRequest", () => {
-  test("returns an array of 4 entries covering all text stages", () => {
+  test("returns an array covering all text stages, including the Auditor gate", () => {
     const tags = videoModelTagsForRequest({ prompt: "test" });
     expect(tags).toHaveLength(VIDEO_TEXT_STAGES.length);
-    expect(tags.length).toBe(4);
+    expect(tags.length).toBe(5);
   });
 
   test("all returned tags are non-empty strings", () => {

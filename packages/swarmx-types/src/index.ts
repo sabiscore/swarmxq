@@ -28,12 +28,12 @@
 //                  file's header for the full rationale.
 // ============================================================================
 
-export * from "./operator-map";
-export * from "./operation-types";
-export * from "./video-types";
-export * from "./series-types";
+export * from "./operator-map.ts";
+export * from "./operation-types.ts";
+export * from "./video-types.ts";
+export * from "./series-types.ts";
 
-import type { VideoHealthEventData, VideoJobEventData } from "./video-types";
+import type { VideoHealthEventData, VideoJobEventData } from "./video-types.ts";
 
 
 // ── Agent ────────────────────────────────────────────────────────────────────

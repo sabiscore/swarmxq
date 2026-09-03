@@ -1,5 +1,6 @@
 "use client";
 
+import { log } from "@/lib/logger";
 import { useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Clapperboard, RotateCcw } from "lucide-react";
@@ -12,7 +13,7 @@ interface ErrorProps {
 
 export default function VideoJobDetailError({ error, reset }: ErrorProps) {
   useEffect(() => {
-    console.error("[VideoJobDetail] Error boundary caught:", error);
+    log.error("[VideoJobDetail] Error boundary caught:", error);
   }, [error]);
 
   return (

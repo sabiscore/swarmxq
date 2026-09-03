@@ -17,6 +17,7 @@ export const VIDEO_TEXT_STAGES: TextVideoJobStage[] = [
   "intent_classification",
   "planning",
   "scripting",
+  "auditor_review",
   "storyboard_generation",
 ];
 
@@ -24,6 +25,7 @@ const DEFAULT_TEXT_STAGE_MODEL_TAG: Record<TextVideoJobStage, string> = {
   intent_classification: "instruct-phi4-pro-q8-prod",
   planning: "plan-qwen25-pro-q5km-prod",
   scripting: "plan-qwen25-pro-q5km-prod",
+  auditor_review: "critique-deepseekr1-pro-q5km-prod",
   storyboard_generation: "plan-qwen25-pro-q5km-prod",
 };
 
@@ -31,6 +33,7 @@ const TEXT_STAGE_MODEL_ENV: Record<TextVideoJobStage, string> = {
   intent_classification: "SWARMX_VIDEO_INTENT_MODEL",
   planning: "SWARMX_VIDEO_PLAN_MODEL",
   scripting: "SWARMX_VIDEO_SCRIPT_MODEL",
+  auditor_review: "SWARMX_VIDEO_AUDITOR_MODEL",
   storyboard_generation: "SWARMX_VIDEO_STORYBOARD_MODEL",
 };
 
@@ -43,6 +46,7 @@ const STAGE_TIMEOUT_DEFAULTS: Record<VideoJobStage, number> = {
   intent_classification: 240_000,
   planning: 300_000,
   scripting: 600_000,
+  auditor_review: 600_000,
   storyboard_generation: 600_000,
   render_assembly: 1_800_000,
   finalizing: 120_000,
@@ -56,6 +60,7 @@ const STAGE_TIMEOUT_BOUNDS: Record<VideoJobStage, { min: number; max: number }> 
   intent_classification: { min: 1_000, max: 600_000 },
   planning: { min: 5_000, max: 900_000 },
   scripting: { min: 10_000, max: 1_800_000 },
+  auditor_review: { min: 10_000, max: 1_200_000 },
   storyboard_generation: { min: 10_000, max: 1_200_000 },
   render_assembly: { min: 30_000, max: 7_200_000 },
   finalizing: { min: 5_000, max: 600_000 },
@@ -65,6 +70,7 @@ const STAGE_TIMEOUT_ENV: Record<VideoJobStage, string> = {
   intent_classification: "VIDEO_INTENT_CLASSIFY_TIMEOUT_MS",
   planning: "VIDEO_PLANNING_TIMEOUT_MS",
   scripting: "VIDEO_SCRIPTING_TIMEOUT_MS",
+  auditor_review: "VIDEO_AUDITOR_TIMEOUT_MS",
   storyboard_generation: "VIDEO_STORYBOARD_TIMEOUT_MS",
   render_assembly: "VIDEO_RENDER_TIMEOUT_MS",
   finalizing: "VIDEO_FINALIZING_TIMEOUT_MS",

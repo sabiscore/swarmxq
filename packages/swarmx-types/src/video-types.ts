@@ -4,7 +4,54 @@
 // video pipeline, virality, workflow, and publishing contracts.
 // ============================================================================
 
+import type { SeriesEpisodeContext } from "./series-types.js";
+
 export type VideoMode = "t2v" | "i2v" | "v2v" | "edit";
+
+export type VideoTemplate =
+  | "myth-vs-fact"
+  | "pov-immersion"
+  | "listicle-countdown"
+  | "reddit-story";
+
+export type VideoJobStage =
+  | "intent_classification"
+  | "planning"
+  | "scripting"
+  | "auditor_review"
+  | "storyboard_generation"
+  | "render_assembly"
+  | "finalizing";
+
+export const VIDEO_JOB_STAGE_ORDER: VideoJobStage[] = [
+  "intent_classification",
+  "planning",
+  "scripting",
+  "auditor_review",
+  "storyboard_generation",
+  "render_assembly",
+  "finalizing",
+];
+
+export const VIDEO_JOB_STAGE_LABELS: Record<VideoJobStage, string> = {
+  intent_classification: "Intent Classification",
+  planning: "Planning",
+  scripting: "Scripting",
+  auditor_review: "Auditor Gate",
+  storyboard_generation: "Storyboard Generation",
+  render_assembly: "Render & Assembly",
+  finalizing: "Finalizing",
+};
+
+export const VIDEO_STAGE_PROGRESS_RANGES: Record<VideoJobStage, { start: number; end: number }> = {
+  intent_classification: { start: 0, end: 15 },
+  planning:              { start: 15, end: 25 },
+  scripting:             { start: 25, end: 40 },
+  auditor_review:        { start: 40, end: 50 },
+  storyboard_generation: { start: 50, end: 70 },
+  render_assembly:       { start: 70, end: 90 },
+  finalizing:            { start: 90, end: 100 },
+};
 
 export type VideoTone =
   | "educational"
@@ -665,6 +712,68 @@ export interface CaptionDraft {
   cta: string;
   hashtags: HashtagSet;
   soundSuggestion?: string;
+}
+
+export const PLATFORM_CHAR_CAPS = {
+  tiktok: { hard: 2200, soft: 280 },
+  reels:  { hard: 2200, soft: 125 },
+  shorts: { hard: 5000, soft: 300 },
+} as const;
+
+export interface VideoJobRequest {
+  id?: string;
+  prompt: string;
+  topic?: string;
+  script?: string;
+  platform?: VideoExportPlatform | "youtube_shorts";
+  niche?: "motivational" | "finance" | "facts" | "true_crime" | "tech" | "other";
+  templateFamily?: "myth-vs-fact" | "list/countdown" | "mystery/reveal" | "product-demo" | "quote-to-insight" | "chart/data" | "motivational" | "series-recap";
+  template?: VideoTemplate;
+  targetDurationSeconds?: number;
+  modelTier?: "fast" | "worker" | "supervisor" | "reasoner";
+  audience?: string;
+  tone?: VideoTone;
+  style?: "faceless_broll" | "kinetic_text" | "storytime" | "tutorial" | "myth_busting";
+  captionStyle?: "bold_center" | "lower_third" | "minimal";
+  voice?: "default" | "calm" | "energetic" | "narrator";
+  voiceProfileId?: VoiceProfileId;
+  storyMode?: VoiceStoryMode;
+  clientRequestId?: string;
+  seriesId?: string;
+  episodeNumber?: number;
+  totalEpisodes?: number;
+  seriesContext?: SeriesEpisodeContext;
+}
+
+export interface VideoOutputMetadata {
+  relativePath: string;
+  absolutePath: string;
+  publicUrl: string;
+  fileSizeBytes: number;
+  durationSeconds: number;
+  widthPx: number;
+  heightPx: number;
+  fps: number;
+  format: "mp4" | "webm";
+  checksum: string;
+  generatedAt: string;
+  scriptText?: string;
+  storyboardFrames?: string[];
+  modelsUsed: Partial<Record<VideoJobStage, string>>;
+  rendererTier?: RendererCapabilityTier;
+  certificationTier?: CertificationTier;
+  certificationBlockers?: string[];
+  voiceArtifact?: VoiceArtifact;
+  mediaQualityReport?: MediaQualityReport;
+  productionPackageDir?: string;
+  renderManifestPath?: string;
+  transcriptPath?: string;
+  srtPath?: string;
+  vttPath?: string;
+  rightsManifestPath?: string;
+  platformPackagePath?: string;
+  thumbnailPath?: string;
+  captionDraft?: CaptionDraft;
 }
 
 export interface CaptionValidation {

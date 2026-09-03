@@ -4,6 +4,24 @@
 
 ---
 
+## Unreleased — Video Template and Runtime Reconciliation (2026-09-02)
+
+### Video pipeline
+
+- Added canonical `myth-vs-fact`, `pov-immersion`, `listicle-countdown`, and
+  `reddit-story` template selection to the dashboard form, API request schema,
+  quick-start presets, and planning prompts.
+- Reconciled the workflow manifest with the canonical production stages,
+  including the Auditor gate and APEX-17 model tags.
+- Updated the video guide for durable queue state, Auditor review, and the
+  current 6220 MB full-pipeline admission floor.
+
+### Archive cleanup
+
+- Archived the deprecated static dashboard under
+  `docs/archive/dashboard-legacy/`. Active non-video routes and agents remain
+  because they are still dependency-linked to health, events, and control-plane workflows.
+
 ## V6.2.63 — Intent Fallback Resilience (2026-08-05)
 
 ### API — malformed intent JSON no longer blocks video generation

@@ -39,14 +39,14 @@ Browser / API client
            ▼
 ┌───────────────────────┐      SSE → dashboard
 │   video-queue.ts      │ ──── orchestrator emits video lifecycle events ─────►
-│   (in-memory queue)   │
+│   (durable queue state)│
 └──────────┬────────────┘
            │ queue.startJob() → runOrchestration()
            ▼
 ┌───────────────────────┐
 │ video-orchestrator.ts │  Sequential, pressure-aware pipeline:
 │                       │  intent_classification → planning → scripting
-│  Model calls          │    → storyboard_generation → render_assembly → finalizing
+│  Model calls          │    → auditor_review → storyboard_generation → render_assembly → finalizing
 │  via Ollama REST API  │
 └──────────┬────────────┘
            │
@@ -78,7 +78,7 @@ The pipeline runs **one job at a time** (sequential queue). Under `constrained_c
 | --- | --- |
 | `apps/swarmx-api/src/types/video.ts` | All video domain types: job, intent, script, storyboard, render, and API contracts. |
 | `apps/swarmx-api/src/types/events.ts` | SSE event union, including video lifecycle variants. |
-| `apps/swarmx-api/src/services/video-queue.ts` | In-memory job registry, FIFO processor, and SSE emission. |
+| `apps/swarmx-api/src/services/video-queue.ts` | Durable job registry, FIFO processor, optional BullMQ worker, and SSE emission. |
 | `apps/swarmx-api/src/services/video-orchestrator.ts` | Pressure-aware pipeline execution, Ollama calls, and ComfyUI dispatch. |
 | `apps/swarmx-api/src/services/video-assets.ts` | File-system helpers for artifact storage and cleanup. |
 | `apps/swarmx-api/src/services/runtime-profiles.ts` | Typed runtime profile resolver for `constrained_cpu_8gb`, `standard_cpu_16gb`, and `accelerated_optional`. |
@@ -159,13 +159,20 @@ The optional ComfyUI path now builds its LTX prompt from the user prompt plus
 `tone`, `niche`, `style`, and first storyboard-frame context. This keeps the
 AI-backdrop path visually aligned with the deterministic FFmpeg fallback.
 
-Kokoro support is installed at the application/provider layer. To make it the
-active neural voice provider on a host, start the local service from the repo
-virtualenv. Install the optional Python extra only if import verification fails.
+Kokoro support is installed at the application/provider layer. The enhanced
+startup script now starts the local service automatically when it is unavailable,
+provided `SWARMX_START_KOKORO_IF_DOWN=1` (the default). It uses the repo
+virtualenv, writes a PID file and log, and polls `/health` for 15 seconds. The
+check is fail-open: API health and video admission remain authoritative, while a
+missing Kokoro service appears as a visible voice capability warning.
 
 ```bash
 SWARMX_TTS_PROVIDER=kokoro .venv/bin/python -m swarmx.services.kokoro_tts_server --port 8888
 ```
+
+For startup automation, configure `SWARMX_TTS_URL` and optionally override
+`SWARMX_KOKORO_LOG` or `SWARMX_KOKORO_PID_FILE`. Disable autostart with
+`SWARMX_START_KOKORO_IF_DOWN=0` when another process manager owns the service.
 
 If the service is not reachable or reports `engine: unavailable`, the API reports a degraded voice capability and falls back according to `SWARMX_TTS_PROVIDER`. `/api/system/health` can also include a voice fallback warning when Kokoro is unavailable and the benchmarked provider path selects Piper or eSpeak instead; the dashboard shows that as a warning without blocking submission.
 
@@ -378,6 +385,7 @@ Create a new video generation job and enqueue it.
   "audience": "string (optional, <=160 chars)",
   "tone": "educational | urgent | warm | contrarian | cinematic | minimal | faceless_broll | kinetic_text",
   "style": "faceless_broll | kinetic_text | storytime | tutorial | myth_busting",
+  "template": "myth-vs-fact | pov-immersion | listicle-countdown | reddit-story",
   "captionStyle": "bold_center | lower_third | minimal",
   "voice": "default | calm | energetic | narrator",
   "voiceProfileId": "auto | kokoro_warm | kokoro_narrator | kokoro_energetic | kokoro_contrarian | kokoro_storytime_dual",
@@ -765,6 +773,8 @@ video:stage_started(stage=planning)
 video:progress(stage=planning)
 video:stage_started(stage=scripting)
 video:progress(stage=scripting)
+video:stage_started(stage=auditor_review)
+video:progress(stage=auditor_review)
 video:stage_started(stage=storyboard_generation)
 video:progress(stage=storyboard_generation)
 video:stage_started(stage=render_assembly)
@@ -783,9 +793,10 @@ The orchestrator executes these canonical stages in order:
 1. `intent_classification`
 2. `planning`
 3. `scripting`
-4. `storyboard_generation`
-5. `render_assembly`
-6. `finalizing`
+4. `auditor_review`
+5. `storyboard_generation`
+6. `render_assembly`
+7. `finalizing`
 
 State transitions are queue-driven:
 
@@ -918,15 +929,15 @@ and compare available physical RAM with the selected profile requirement.
 | Profile | Minimum available RAM | When to use |
 | ------- | --------------------- | ----------- |
 | Low-RAM / Pilot-lite (`SWARMX_VIDEO_LOW_RAM_MODE=1`) | 3300 MB | Constrained 8 GB hosts; no model resident |
-| Full 7B planning (default) | 6170 MB | Standard; available on 16 GB hosts with headroom |
-| reasoner tier (`modelTier=reasoner`) | 6170 MB | Requires the same headroom as the full 7B planning profile |
+| Full 7B planning plus Auditor gate (default) | 6220 MB | Standard; available on 16 GB hosts with headroom |
+| reasoner tier (`modelTier=reasoner`) | 6220 MB | Requires the same headroom as the full 7B planning profile |
 
 On **constrained 8 GB hosts**, use `SWARMX_VIDEO_LOW_RAM_MODE=1` only when at
 least 3300 MB is available and no model is currently resident. Do not preload
 Relay or a specialist before that measurement.
 
 On **16 GB hosts** (auto-detected by `startup-enhanced.sh` when total RAM ≥ 12 GB,
-or pinned via `SWARMX_HOST_PROFILE=16gb`), the full 7B planning profile (6170 MB
+or pinned via `SWARMX_HOST_PROFILE=16gb`), the full 7B planning profile plus Auditor gate (6220 MB
 minimum) is typically available with comfortable headroom. `SWARMX_VIDEO_LOW_RAM_MODE`
 is not needed on these hosts unless free RAM is unexpectedly constrained at the
 time of submission; the admission gate will block the job and report the deficit if

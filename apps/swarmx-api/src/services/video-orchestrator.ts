@@ -107,7 +107,11 @@ import { ModalVideoRenderBackend } from "./modal-video-render-backend.js";
 import type { RenderSegmentTask } from "./video-render-backend.js";
 import { buildCreativeComfyPrompt, generateLTXWorkflow } from "./video-workflows.js";
 import { scoreVirality } from "./virality-scorer.js";
-import { generateCaptionDraftWithValidation } from "./caption-generator.js";
+import {
+  generateFinalizerCaptionDraft,
+  buildDeterministicCaptionDraft,
+} from "./caption-generator.js";
+import type { CaptionDraft } from "../types/video.js";
 import { generateOllamaText } from "./ollama.js";
 import { fetchBackend } from "./backend-fetch-errors.js";
 import { log } from "../lib/logger.js";
@@ -115,7 +119,7 @@ import { HOOK_BLOCKLIST, findHookBlocklistViolations } from "../lib/creative-qua
 import { classifyHookFamily, validateHookCandidate } from "../lib/hook-laboratory.js";
 import { tracer, SpanStatusCode, trace } from "../lib/tracer.js";
 import { renderWithFfmpeg, type FfmpegRenderPackage } from "./ffmpeg-video-renderer.js";
-import { sanitizeReasoningOutput } from "./reasoning-sanitizer.js";
+import { extractJson, sanitizeReasoningOutput } from "./reasoning-sanitizer.js";
 import { validateStageResult, type ValidatedStage } from "./stage-schemas.js";
 import { certifyProductionPack } from "./creative-factory-certification.js";
 import { toVideoJobError } from "./video-error-classification.js";
@@ -150,6 +154,7 @@ const STAGE_TIMEOUT_MS: Record<VideoJobStage, number> = {
   intent_classification:  stageTimeoutMs("intent_classification"),
   planning:              stageTimeoutMs("planning"),
   scripting:             stageTimeoutMs("scripting"),
+  auditor_review:        stageTimeoutMs("auditor_review"),
   storyboard_generation: stageTimeoutMs("storyboard_generation"),
   render_assembly:      stageTimeoutMs("render_assembly"),
   finalizing:            stageTimeoutMs("finalizing"),
@@ -183,6 +188,7 @@ interface OrchestratorContext {
   scriptText?: string;
   storyboardFrames?: string[];
   viralitySummary?: string;
+  captionDraft?: CaptionDraft;
 }
 
 function toPublicStatus(stage: VideoJobStage): string {
@@ -190,6 +196,7 @@ function toPublicStatus(stage: VideoJobStage): string {
     intent_classification: "classifying",
     planning: "staging",
     scripting: "scripting",
+    auditor_review: "reviewing",
     storyboard_generation: "staging",
     render_assembly: "generating",
     finalizing: "reviewing",
@@ -794,9 +801,15 @@ async function stagePlanning(
   }
 }
 
+interface ScriptingOptions {
+  auditorRepairInstruction?: string;
+  reinforceHookBlocklist?: boolean;
+}
+
 async function stageScripting(
   ctx:  OrchestratorContext,
-  plan: string[]
+  plan: string[],
+  options: ScriptingOptions = {},
 ): Promise<{ scriptText: string }> {
   const { modelTag: model, keepAlive, overrides } = await acquireModel(
     "scripting",
@@ -819,11 +832,17 @@ async function stageScripting(
     let lastValidationFailed = false;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const promptOptions: ScriptingOptions = {
+        reinforceHookBlocklist: options.reinforceHookBlocklist === true || attempt > 0,
+      };
+      if (options.auditorRepairInstruction) {
+        promptOptions.auditorRepairInstruction = options.auditorRepairInstruction;
+      }
       // [VOT-13] Sanitize output so <think> artifacts never appear in the
       //          generated script that feeds the storyboard and render stages.
       const { text: rawScript, tokenCount: scriptTokens, latencyMs: scriptLatency } = await ollamaGenerate(
         model,
-        buildScriptingPrompt(ctx.job.request, plan, { reinforceHookBlocklist: attempt > 0 }),
+        buildScriptingPrompt(ctx.job.request, plan, promptOptions),
         controller.signal,
         1024,
         overrides,
@@ -880,6 +899,156 @@ async function stageScripting(
     controller.abort();
     ModelOrchestrator.getInstance().onModelCallComplete(model);
   }
+}
+
+interface AuditorReviewDecision {
+  hookStrength: number;
+  forceRewrite: boolean;
+  reason: string;
+  rewriteInstructions: string[];
+}
+
+function clampScore(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
+}
+
+function deterministicAuditorDecision(scriptText: string, reason = "deterministic_hook_gate"): AuditorReviewDecision {
+  const hook = extractHookLine(scriptText) ?? "";
+  const hookStrength = derivePreliminaryHookScore(scriptText);
+  const violations = findHookBlocklistViolations(hook);
+  const validation = validateHookCandidate(hook);
+  const forceRewrite = hookStrength < 0.55 || violations.length > 0 || validation.wordCount > 18;
+  const rewriteInstructions: string[] = [];
+
+  if (violations.length > 0) {
+    rewriteInstructions.push(`Replace the blocked opener: ${violations.join(", ")}`);
+  }
+  if (validation.wordCount > 18) {
+    rewriteInstructions.push("Cut the [HOOK] to 18 words or fewer.");
+  }
+  if (hookStrength < 0.55) {
+    rewriteInstructions.push("Use a number shock, named villain, identity challenge, or counterintuitive claim in the first line.");
+  }
+
+  return {
+    hookStrength,
+    forceRewrite,
+    reason,
+    rewriteInstructions,
+  };
+}
+
+function parseAuditorDecision(candidate: unknown, scriptText: string): AuditorReviewDecision {
+  const fallback = deterministicAuditorDecision(scriptText);
+  if (!candidate || typeof candidate !== "object") return fallback;
+
+  const record = candidate as Record<string, unknown>;
+  const hookStrength = clampScore(record["hookStrength"], fallback.hookStrength);
+  const rewriteInstructions = Array.isArray(record["rewriteInstructions"])
+    ? record["rewriteInstructions"].map(String).map((item) => item.trim()).filter(Boolean).slice(0, 4)
+    : fallback.rewriteInstructions;
+  const reason = typeof record["reason"] === "string" && record["reason"].trim()
+    ? record["reason"].trim().slice(0, 240)
+    : fallback.reason;
+  const forceRewrite =
+    record["forceRewrite"] === true ||
+    hookStrength < 0.55 ||
+    fallback.forceRewrite;
+
+  return {
+    hookStrength,
+    forceRewrite,
+    reason,
+    rewriteInstructions,
+  };
+}
+
+async function stageAuditorReview(
+  ctx:        OrchestratorContext,
+  plan:       string[],
+  scriptText: string,
+): Promise<{ scriptText: string; hookStrength: number; rewritten: boolean }> {
+  let decision = deterministicAuditorDecision(scriptText);
+  let model: string | undefined;
+  let startedAt = new Date().toISOString();
+  let traceRecorded = false;
+  const controller = stageController(ctx, "auditor_review");
+
+  try {
+    const acquired = await acquireModel("auditor_review", ctx.job.request);
+    model = acquired.modelTag;
+    startedAt = new Date().toISOString();
+    ctx.modelsUsed["auditor_review"] = model;
+    trace.getActiveSpan()?.setAttribute("swarmx.model.tag", model);
+
+    const { text: rawReview, tokenCount, latencyMs } = await ollamaGenerate(
+      model,
+      buildAuditorReviewPrompt(ctx.job.request, scriptText),
+      controller.signal,
+      384,
+      acquired.overrides,
+      acquired.keepAlive,
+    );
+    const { text: sanitizedReview } = sanitizeReasoningOutput(rawReview);
+    const parsed = extractJson<unknown>(sanitizedReview);
+    decision = parseAuditorDecision(parsed.ok ? parsed.data : null, scriptText);
+    recordOperatorTrace(ctx, "auditor_review", model, startedAt, true, tokenCount, latencyMs);
+    traceRecorded = true;
+  } catch (error) {
+    if (model && !traceRecorded) {
+      recordOperatorTrace(ctx, "auditor_review", model, startedAt, false, 0, 0);
+    }
+    log.warn({
+      jobId: ctx.job.id,
+      stage: "auditor_review",
+      errorCode: errorCodeOf(error) || "AUDITOR_REVIEW_DEGRADED",
+      reason: error instanceof Error ? error.message : String(error),
+    }, "Auditor review unavailable — using deterministic hook gate");
+  } finally {
+    controller.abort();
+    if (model) {
+      ModelOrchestrator.getInstance().onModelCallComplete(model);
+    }
+  }
+
+  ctx.job.preliminaryHookScore = decision.hookStrength;
+  ctx.job.updatedAt = new Date().toISOString();
+
+  if (!decision.forceRewrite) {
+    return { scriptText, hookStrength: decision.hookStrength, rewritten: false };
+  }
+
+  if (model) {
+    await ModelOrchestrator.getInstance().unloadModel(model);
+  }
+
+  log.warn({
+    jobId: ctx.job.id,
+    hookStrength: decision.hookStrength,
+    reason: decision.reason,
+    rewriteInstructions: decision.rewriteInstructions,
+  }, "Auditor requested one script rewrite before storyboard generation");
+
+  ctx.broadcast({
+    type: "video:stream",
+    timestamp: new Date().toISOString(),
+    data: {
+      jobId: ctx.job.id,
+      stage: "auditor_review",
+      pct: 50,
+      operatorTag: model ?? "system",
+      message: `Auditor requested hook repair (${decision.hookStrength.toFixed(2)}).`,
+    },
+  });
+
+  const rewritten = await stageScripting(ctx, plan, {
+    auditorRepairInstruction: decision.rewriteInstructions.join(" "),
+    reinforceHookBlocklist: true,
+  });
+  const rewrittenHookStrength = derivePreliminaryHookScore(rewritten.scriptText);
+  return { scriptText: rewritten.scriptText, hookStrength: rewrittenHookStrength, rewritten: true };
 }
 
 async function stageStoryboardGeneration(
@@ -1014,7 +1183,7 @@ async function stageRenderAssembly(
           const stageProgress: VideoStageProgress = {
             stage: "render_assembly",
             stageProgress: progress.pct,
-            overallProgress: Math.round(75 + (progress.pct * 0.2)),
+            overallProgress: Math.round(70 + (progress.pct * 0.2)),
             message: progress.message,
             startedAt: new Date().toISOString(),
           };
@@ -1116,20 +1285,53 @@ async function stageFinalizing(
   outputFilename: string,
   renderPackage?: FfmpegRenderPackage
 ): Promise<VideoOutputMetadata> {
-  // stageFinalizing calls no model — no modelsUsed entry, no acquireModel().
   const startedAt = new Date().toISOString();
+  const targetPlatform =
+    ctx.job.request.platform === "youtube_shorts"
+      ? "shorts"
+      : (ctx.job.request.platform ?? "generic");
+
+  let captionDraft: CaptionDraft | undefined;
+  try {
+    const captionResult = await generateFinalizerCaptionDraft({
+      topic: ctx.job.request.prompt,
+      tone: ctx.job.request.tone ?? "educational",
+      platform: targetPlatform,
+      ...(scriptText ? { scriptText } : {}),
+      ...(ctx.viralitySummary ? { viralitySummary: ctx.viralitySummary } : {}),
+      ...(ctx.jobAbortSignal ? { signal: ctx.jobAbortSignal } : {}),
+      onModelAcquired: (stageKey, modelTag) => {
+        ctx.modelsUsed[stageKey] = modelTag;
+      },
+    });
+    captionDraft = captionResult.draft;
+  } catch (error) {
+    log.warn({
+      jobId: ctx.job.id,
+      error: error instanceof Error ? error.message : String(error),
+    }, "SEO Finalizer model call failed — using deterministic caption draft");
+    captionDraft = buildDeterministicCaptionDraft({
+      topic: ctx.job.request.prompt,
+      tone: ctx.job.request.tone ?? "educational",
+      platform: targetPlatform,
+    }, scriptText);
+  }
+
+  ctx.captionDraft = captionDraft;
+
   pushOperatorTrace(ctx.job, {
     stage: toPublicStatus("finalizing"),
-    operatorTag: "system",
-    modelTag: "system",
-    operator: "System",
+    operatorTag: ctx.modelsUsed["finalizing"] ?? "system",
+    modelTag: ctx.modelsUsed["finalizing"] ?? "system",
+    operator: ctx.modelsUsed["finalizing"] ? resolveOperatorName(ctx.modelsUsed["finalizing"]) : "System",
     startedAt,
     completedAt: new Date().toISOString(),
-    latencyMs: 0,
+    latencyMs: Date.now() - new Date(startedAt).getTime(),
     tokenCount: 0,
     success: true,
     timestamp: startedAt,
   });
+
   return assets.buildOutputMetadata({
     jobId:            ctx.job.id,
     outputFilename,
@@ -1137,6 +1339,7 @@ async function stageFinalizing(
     storyboardFrames: frames,
     modelsUsed:       ctx.modelsUsed as Record<string, string>,
     request:          ctx.job.request,
+    captionDraft,
     ...(renderPackage ? { renderPackage } : {}),
   });
 }
@@ -1161,11 +1364,13 @@ async function stageViralityAndCaption(ctx: OrchestratorContext): Promise<void> 
   let captionDraft = virality?.captionDraft;
 
   try {
-    const captionResult = await generateCaptionDraftWithValidation({
+    const captionResult = await generateFinalizerCaptionDraft({
       topic: ctx.job.request.prompt,
       tone: ctx.job.request.tone ?? "educational",
       platform: targetPlatform,
-      viralitySummary,
+      ...(viralitySummary ? { viralitySummary } : {}),
+      ...(ctx.scriptText ? { scriptText: ctx.scriptText } : {}),
+      ...(ctx.jobAbortSignal ? { signal: ctx.jobAbortSignal } : {}),
     });
     captionDraft = captionResult.draft;
   } catch (error) {
@@ -1302,13 +1507,13 @@ export async function runOrchestration(
     });
 
     let plan: string[] = [];
-    await runStage(ctx, "planning", 15, 30, async () => {
+    await runStage(ctx, "planning", 15, 25, async () => {
       const result = await stagePlanning(ctx, intent);
       plan = result.plan;
     });
 
     let scriptText = "";
-    await runStage(ctx, "scripting", 30, 50, async () => {
+    await runStage(ctx, "scripting", 25, 40, async () => {
       const result = await stageScripting(ctx, plan);
       scriptText = result.scriptText;
       ctx.scriptText = scriptText;
@@ -1320,15 +1525,36 @@ export async function runOrchestration(
         data: {
           jobId: ctx.job.id,
           stage: "scripting",
-          pct: 50,
+          pct: 40,
           operatorTag: "system",
           message: `Pre-render hook confidence ${ctx.job.preliminaryHookScore.toFixed(2)}`,
         },
       });
     });
 
+    await runStage(ctx, "auditor_review", 40, 50, async () => {
+      const result = await stageAuditorReview(ctx, plan, scriptText);
+      scriptText = result.scriptText;
+      ctx.scriptText = scriptText;
+      ctx.job.preliminaryHookScore = result.hookStrength;
+      ctx.job.updatedAt = new Date().toISOString();
+      ctx.broadcast({
+        type: "video:stream",
+        timestamp: new Date().toISOString(),
+        data: {
+          jobId: ctx.job.id,
+          stage: "auditor_review",
+          pct: 50,
+          operatorTag: ctx.modelsUsed["auditor_review"] ?? "system",
+          message: result.rewritten
+            ? `Auditor rewrite complete; hook confidence ${result.hookStrength.toFixed(2)}.`
+            : `Auditor approved script; hook confidence ${result.hookStrength.toFixed(2)}.`,
+        },
+      });
+    });
+
     let frames: string[] = [];
-    await runStage(ctx, "storyboard_generation", 50, 75, async () => {
+    await runStage(ctx, "storyboard_generation", 50, 70, async () => {
       const result = await stageStoryboardGeneration(ctx, scriptText);
       frames = result.frames;
       ctx.storyboardFrames = frames;
@@ -1336,18 +1562,22 @@ export async function runOrchestration(
 
     let outputFilename = "";
     let renderPackage: FfmpegRenderPackage | undefined;
-    await runStage(ctx, "render_assembly", 75, 95, async () => {
+    await runStage(ctx, "render_assembly", 70, 90, async () => {
       const result = await stageRenderAssembly(ctx, frames);
       outputFilename = result.outputFilename;
       renderPackage = result.renderPackage;
     });
 
     let output: VideoOutputMetadata | undefined;
-    await runStage(ctx, "finalizing", 95, 100, async () => {
+    await runStage(ctx, "finalizing", 90, 100, async () => {
       output = await stageFinalizing(ctx, scriptText, frames, outputFilename, renderPackage);
     });
 
     await stageViralityAndCaption(ctx);
+    const finalCaptionDraft = ctx.job.viralitySignal?.captionDraft ?? ctx.captionDraft;
+    if (output && finalCaptionDraft) {
+      output.captionDraft = finalCaptionDraft;
+    }
 
     if (!output) {
       throw makeError("UNKNOWN", "finalizing stage did not produce output", false, "finalizing");
@@ -1707,14 +1937,57 @@ function creativeBriefLines(req: VideoJobRequest): string {
 }
 
 const TEMPLATE_FAMILY_STRUCTURES: Record<string, string> = {
-  "myth-vs-fact": "Structure as a direct debunking. Hook states the myth, Body provides the surprising fact, Resolution explains why the myth persisted.",
+  "myth-vs-fact": "Structure as a bipartite narrative: The first half exposes and challenges a widespread myth using a Named Villain or Counterintuitive Claim; the second half delivers concrete, undeniable factual evidence and actionable truth.",
+  "pov-immersion": "Write entirely in second-person address ('you/your') placing the viewer directly in the center of the experience. Hook with an Identity Challenge or Before/After Gap, escalate sensory tension, and deliver a personal transformation.",
+  "listicle-countdown": "Structure as a rapid-fire numbered countdown in descending order (5 to 1). Open with a Number Shock hook, escalate value with each number, and deliver the highest-impact payoff on #1.",
+  "reddit-story": "Structure as a confessional, dramatic storytelling arc. Hook with Forbidden Knowledge, reveal context in escalating fragments, show the turning point, and resolve with the aftermath.",
   "list/countdown": "Structure as a rapid-fire list. Hook introduces the topic/stakes, Body cycles through 3-5 items quickly, Resolution synthesizes the takeaway.",
   "mystery/reveal": "Structure as a narrative puzzle. Hook presents an anomaly, Body drops breadcrumbs/clues, Resolution reveals the surprising answer.",
   "product-demo": "Structure as a problem/solution showcase. Hook highlights a visceral pain point, Body demonstrates the solution in action, Resolution highlights the outcome.",
   "quote-to-insight": "Structure around a powerful quote. Hook drops the quote, Body analyzes its non-obvious meaning, Resolution applies it to the viewer's life.",
   "chart/data": "Structure around a single striking data point. Hook presents the stat, Body visualizes the trend and context, Resolution explains the implication.",
   "motivational": "Structure as a hero's journey micro-narrative. Hook identifies a moment of defeat, Body shows the pivot/grind, Resolution delivers the triumph.",
-  "series-recap": "Structure as a fast-paced catch-up. Hook reminds of the cliffhanger, Body blitzes through key plot points, Resolution sets up the next episode."
+  "series-recap": "Structure as a fast-paced catch-up. Hook reminds of the cliffhanger, Body blitzes through key plot points, Resolution sets up the next episode.",
+};
+
+const TEMPLATE_SCRIPTING_RULES: Record<string, string> = {
+  "myth-vs-fact": `TEMPLATE [myth-vs-fact] RULES:
+- [HOOK]: Must challenge the myth directly using either a Named Villain pattern (attributing the problem to a specific false culprit/concept) or a Counterintuitive Claim. Hard limit ≤18 words.
+- [BODY]: Split into two distinct halves: The first half challenges and deconstructs the myth/villain; the second half presents verified factual evidence and counter-proof.
+- [RESOLUTION]: 1–2 actionable sentences detailing what the viewer can now do with the verified truth.`,
+
+  "pov-immersion": `TEMPLATE [pov-immersion] RULES:
+- Address: Use strict SECOND-PERSON address ("you", "your", "you're") throughout every section ([HOOK], [BODY], [RESOLUTION], [CTA]). Never switch to third-person ("they/people") or first-person ("I/we").
+- [HOOK]: Must use an Identity Challenge pattern (questions a belief the viewer holds about themselves) or a Before/After Gap pattern (implies a desired transformation). Hard limit ≤18 words.
+- [BODY]: Place the viewer directly into the scenario with visceral, escalating second-person stakes.`,
+
+  "listicle-countdown": `TEMPLATE [listicle-countdown] RULES:
+- [HOOK]: Must open with a Number Shock pattern citing a specific striking number or count. Hard limit ≤18 words.
+- [BODY]: Format as a descending numbered countdown: "Number 5: ... Number 4: ... Number 3: ... Number 2: ... Number 1: ...". Each item must escalate in stakes and payoff, saving the most powerful reveal for #1.
+- [RESOLUTION]: 1–2 sentences synthesizing the #1 takeaway.`,
+
+  "reddit-story": `TEMPLATE [reddit-story] RULES:
+- [HOOK]: Must use the Forbidden Knowledge pattern (framing the content as suppressed, hidden, or insider truth). Hard limit ≤18 words.
+- [BODY]: Confessional, escalating narrative. MANDATORY: Every single sentence in [BODY] MUST have an accompanying [VISUAL: subject + motion + setting + mood + quality keywords] tag on the line immediately following it.
+- [RESOLUTION]: 1–2 sentences on the aftermath, lesson learned, or lingering question.`,
+};
+
+const TEMPLATE_STORYBOARD_RULES: Record<string, string> = {
+  "myth-vs-fact": `TEMPLATE [myth-vs-fact] VISUAL DIRECTIVES:
+- Storyboard MUST include at least 1 split-screen scene descriptor (e.g. "[SCENE N | PROOF] Split-screen: Left shows Myth (common belief) vs Right shows Fact (verified evidence) | ...").
+- Create sharp visual contrast between the myth scene (darker, confused, warning cues) and the fact scene (clear, illuminated, data-proven).`,
+
+  "pov-immersion": `TEMPLATE [pov-immersion] VISUAL DIRECTIVES:
+- Storyboard must use subjective first-person POV camera angles (over-the-shoulder, eye-level viewport, hands in frame, dynamic zoom-ins).
+- Put the viewer in the driver's seat of each visual scene.`,
+
+  "listicle-countdown": `TEMPLATE [listicle-countdown] VISUAL DIRECTIVES:
+- Scene count MUST match the list item count ± 1 (e.g. 5 to 7 scenes for a 5-item countdown: opener hook, items 5 to 1, and CTA).
+- Each countdown scene must specify a prominent on-screen countdown number badge/graphic (e.g. "#5", "#4", "#3", "#2", "#1") with fast-cut transitions.`,
+
+  "reddit-story": `TEMPLATE [reddit-story] VISUAL DIRECTIVES:
+- Storyboard MUST use the "fractal_noise" procedural FFmpeg background preset direction (dark, textured procedural noise background with subtle organic grain).
+- Visuals must emphasize text snippets, highlighted quotes, redacted document visuals, and dramatic confessional atmosphere.`,
 };
 
 function buildPlanningPrompt(req: VideoJobRequest, intent: string): string {
@@ -1723,8 +1996,9 @@ function buildPlanningPrompt(req: VideoJobRequest, intent: string): string {
   const contextEnd = Math.round(dur * 0.25);
   const insightEnd = Math.round(dur * 0.65);
   const proofEnd = dur - 7;
-  const templateHint = req.templateFamily && TEMPLATE_FAMILY_STRUCTURES[req.templateFamily] 
-    ? `\nTemplate Family [${req.templateFamily}]: ${TEMPLATE_FAMILY_STRUCTURES[req.templateFamily]}\nApply this structural template to the 5 beats.` 
+  const selectedTemplate = req.template ?? req.templateFamily;
+  const templateHint = selectedTemplate && TEMPLATE_FAMILY_STRUCTURES[selectedTemplate]
+    ? `\nStory Template [${selectedTemplate}]: ${TEMPLATE_FAMILY_STRUCTURES[selectedTemplate]}\nApply this structural template to the 5 beats.`
     : "";
 
   return `You are a short-form video production planner. Plan this ${dur}-second faceless video as 5 precise production beats.
@@ -1820,17 +2094,24 @@ function buildSeriesContextPreamble(req: VideoJobRequest): string {
 function buildScriptingPrompt(
   req: VideoJobRequest,
   plan: string[],
-  options: { reinforceHookBlocklist?: boolean } = {},
+  options: ScriptingOptions = {},
 ): string {
   const dur = req.targetDurationSeconds ?? 60;
   const toneInstruction = TONE_RULES[req.tone ?? "educational"] ?? TONE_RULES["educational"];
   const seriesPreamble = buildSeriesContextPreamble(req);
+  const selectedTemplate = req.template ?? req.templateFamily;
+  const templateScriptingRule = selectedTemplate && TEMPLATE_SCRIPTING_RULES[selectedTemplate]
+    ? `\n${TEMPLATE_SCRIPTING_RULES[selectedTemplate]}\n`
+    : "";
   const bodyTargetSecs = Math.round(dur * 0.6);
   const hookBlocklist = HOOK_BLOCKLIST.slice(0, 6)
     .map((p) => `"${p.trim()}"`)
     .join(", ");
   const regenerationInstruction = options.reinforceHookBlocklist
     ? "\nREGENERATION NOTE: The previous hook opened like a generic preamble. Replace it with a specific tension, number, named villain, or identity challenge. Do not start with a greeting, setup phrase, or self-reference.\n"
+    : "";
+  const auditorRepairInstruction = options.auditorRepairInstruction
+    ? `\nAUDITOR REPAIR NOTE: ${options.auditorRepairInstruction}\nRewrite the script once with a stronger [HOOK] while preserving the same topic and production plan.\n`
     : "";
 
   return `You are an expert short-form video scriptwriter for ${req.platform ?? "tiktok"}.
@@ -1842,7 +2123,8 @@ Production plan:
 ${plan.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 
 Tone: ${toneInstruction}
-${regenerationInstruction}
+${templateScriptingRule}${regenerationInstruction}
+${auditorRepairInstruction}
 
 WRITING RULES — follow these; do NOT output them:
 [HOOK]: At most 18 words. One sentence. Pattern-interrupt opening — contrast, claim, or question. No preamble. Never start with ${hookBlocklist} or similar.
@@ -1858,8 +2140,35 @@ Write the script now. Output ONLY the four sections below. No commentary, no rul
 [CTA]`;
 }
 
+function buildAuditorReviewPrompt(req: VideoJobRequest, scriptText: string): string {
+  return `You are the Auditor operator for a short-form video pipeline.
+
+Evaluate only the script's scroll-stop strength before storyboard and render. Do not rewrite the full script.
+
+Platform: ${req.platform ?? "tiktok"}
+Tone: ${req.tone ?? "educational"}
+Audience: ${req.audience ?? "general viewers"}
+Brief: "${req.prompt}"
+
+Rules:
+- [HOOK] must be 18 words or fewer.
+- [HOOK] must not start with a greeting, setup phrase, self-reference, or generic preamble.
+- Strong hooks use number shock, named villain, identity challenge, forbidden knowledge, before/after gap, stakes escalation, or a counterintuitive claim.
+- Force rewrite when hookStrength is below 0.55.
+
+Script:
+${scriptText.slice(0, 2400)}
+
+Respond as strict JSON only:
+{"hookStrength":0.0,"forceRewrite":false,"reason":"specific reason","rewriteInstructions":["one concrete hook repair instruction"]}`;
+}
+
 function buildStoryboardPrompt(req: VideoJobRequest, scriptText: string): string {
   const isKinetic = req.style === "kinetic_text" || req.tone === "kinetic_text";
+  const selectedTemplate = req.template ?? req.templateFamily;
+  const templateStoryboardRule = selectedTemplate && TEMPLATE_STORYBOARD_RULES[selectedTemplate]
+    ? `\n${TEMPLATE_STORYBOARD_RULES[selectedTemplate]}\n`
+    : "";
   const styleNote = isKinetic
     ? "Bold typography on dark or high-contrast backgrounds. Text appears in sync with narration. Minimal motion blur."
     : "Abstract b-roll: particles, flowing light, slow-motion textures, data visualizations. No faces, no people.";
@@ -1882,7 +2191,7 @@ function buildStoryboardPrompt(req: VideoJobRequest, scriptText: string): string
   return `You are a visual director for ${isKinetic ? "kinetic typography" : "faceless b-roll"} short-form video.
 ${seriesPreamble}Platform: ${req.platform ?? "tiktok"} | Tone: ${req.tone ?? "educational"}
 Visual style: ${styleNote}
-Color palette direction: ${colorMood}${characterSeedNote}
+Color palette direction: ${colorMood}${characterSeedNote}${templateStoryboardRule}
 
 Script:
 ${scriptText.slice(0, 1400)}

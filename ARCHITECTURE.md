@@ -401,7 +401,7 @@ Use swarmx.cli.run() directly.
 
 **Do not add new functionality to `brain/`.** New features belong in `src/swarmx/`.
 
-Planned removal: **Phase 4** (legacy dashboard retirement milestone).
+The legacy dashboard is archived at `docs/archive/dashboard-legacy/`; the canonical runtime is `apps/swarmx-dashboard/`.
 
 ### Shell Wrapper Delegation Chain
 

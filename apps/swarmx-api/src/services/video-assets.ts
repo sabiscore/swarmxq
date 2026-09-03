@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { copyFile, stat, unlink, writeFile, mkdir } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
 import { createReadStream, existsSync } from "node:fs";
-import type { VideoOutputMetadata, VideoJobRequest, VideoJobStage } from "../types/video.js";
+import type { VideoOutputMetadata, VideoJobRequest, VideoJobStage, CaptionDraft } from "../types/video.js";
 import type { FfmpegRenderPackage } from "./ffmpeg-video-renderer.js";
 import type { VideoPerformanceMetrics } from "@swarmx/types/video-types";
 import { loadEnv } from "../lib/env.js";
@@ -46,6 +46,7 @@ export interface BuildMetadataInput {
   modelsUsed: Record<string, string>;
   request: VideoJobRequest;
   renderPackage?: FfmpegRenderPackage;
+  captionDraft?: CaptionDraft;
 }
 
 // ─── Path Resolution ──────────────────────────────────────────────────────────
@@ -134,6 +135,7 @@ export async function buildOutputMetadata(
     ...(input.scriptText !== undefined ? { scriptText: input.scriptText } : {}),
     ...(input.storyboardFrames !== undefined ? { storyboardFrames: input.storyboardFrames } : {}),
     modelsUsed: input.modelsUsed,
+    ...(input.captionDraft !== undefined ? { captionDraft: input.captionDraft } : {}),
     ...(input.renderPackage
       ? {
         rendererTier: input.renderPackage.rendererTier,

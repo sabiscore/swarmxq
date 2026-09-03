@@ -136,10 +136,10 @@
 ./core/memory/vector_store.py
 ./core/skills/__init__.py
 ./core/skills/crystallizer.py
-./dashboard-legacy/README.md
-./dashboard-legacy/app.js
-./dashboard-legacy/index.html
-./dashboard-legacy/styles.css
+./docs/archive/dashboard-legacy/README.md
+./docs/archive/dashboard-legacy/app.js
+./docs/archive/dashboard-legacy/index.html
+./docs/archive/dashboard-legacy/styles.css
 ./dashboard/app.js
 ./dashboard/index.html
 ./dashboard/styles.css

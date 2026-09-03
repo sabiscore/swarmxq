@@ -10,12 +10,12 @@
  * [V6.2-FIX-02] Split endpoint health from model-list readiness so the API can
  * fail over across localhost/127.0.0.1 even when /api/tags is slow or blocked.
  */
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { sanitizeReasoningOutput } from "./reasoning-sanitizer.js";
 import { fetchBackend } from "./backend-fetch-errors.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface OllamaServiceConfig {
   baseUrl: string;
@@ -138,7 +138,7 @@ async function probeEndpoint(baseUrl: string): Promise<EndpointProbeResult> {
 async function probeSubprocessModels(): Promise<string[]> {
   try {
     const { stdout } = await Promise.race([
-      execAsync("ollama list 2>/dev/null || true", { timeout: 3000 }),
+      execFileAsync("ollama", ["list"], { timeout: 3000, maxBuffer: 1024 * 1024 }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("subprocess timeout")), 3500),
       ),
